@@ -65,7 +65,7 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-500">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-rpg-900/90 backdrop-blur-md animate-in fade-in duration-500">
       <div className="w-full max-w-2xl bg-rpg-800 border-2 border-rpg-accent rounded-lg shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-300 relative">
         
         {/* Header */}
@@ -73,7 +73,7 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
           <div className="flex justify-center mb-2">
             <ArrowUpCircle className="w-12 h-12 text-rpg-accent animate-bounce" />
           </div>
-          <h2 className="text-3xl font-serif font-bold text-white">Level Up!</h2>
+          <h2 className="text-3xl font-serif font-bold text-rpg-text">Level Up!</h2>
           <p className="text-rpg-muted text-lg">You have reached Level {nextLevel}</p>
         </div>
 
@@ -83,7 +83,7 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
           {step === 'hp' && (
             <div className="flex flex-col items-center justify-center space-y-8 py-8">
               <div className="text-center space-y-2">
-                <h3 className="text-xl font-bold text-white uppercase tracking-wider">Increase Vitality</h3>
+                <h3 className="text-xl font-bold text-rpg-text uppercase tracking-wider">Increase Vitality</h3>
                 <p className="text-rpg-muted text-sm">Roll your Hit Die to increase your Maximum HP.</p>
               </div>
 
@@ -99,8 +99,8 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                    )
                 ) : (
                    <div className="text-center animate-in zoom-in duration-300">
-                     <span className="block text-6xl font-serif font-bold text-green-400">{rolledHp}</span>
-                     <span className="text-xs text-green-200/50 uppercase font-bold mt-2 block">HP Gained</span>
+                     <span className="block text-6xl font-serif font-bold text-rpg-success">{rolledHp}</span>
+                     <span className="text-xs text-rpg-success uppercase font-bold mt-2 block">HP Gained</span>
                      <span className="text-[10px] text-rpg-muted absolute -bottom-8 left-0 right-0">
                         (Roll + CON Mod {conMod})
                      </span>
@@ -112,14 +112,14 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                 <button 
                   onClick={handleRollHp}
                   disabled={isRolling}
-                  className="bg-red-700 hover:bg-red-600 text-white font-bold py-3 px-8 rounded-full shadow-lg flex items-center transition-transform active:scale-95"
+                  className="bg-rpg-danger hover:opacity-90 text-white font-bold py-3 px-8 rounded-full shadow-lg flex items-center transition-transform active:scale-95"
                 >
                   <Dices className="mr-2 w-5 h-5" /> Roll Hit Die
                 </button>
               ) : (
                 <button 
                   onClick={() => setStep('skills')}
-                  className="bg-rpg-accent hover:bg-yellow-500 text-rpg-900 font-bold py-3 px-8 rounded shadow-lg flex items-center animate-in fade-in slide-in-from-bottom-2"
+                  className="bg-rpg-accent hover:opacity-90 text-rpg-900 font-bold py-3 px-8 rounded shadow-lg flex items-center animate-in fade-in slide-in-from-bottom-2"
                 >
                   Next: Skills <Shield className="ml-2 w-5 h-5" />
                 </button>
@@ -131,11 +131,11 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
              <div className="space-y-6">
                 <div className="flex justify-between items-end border-b border-rpg-700 pb-4">
                   <div>
-                    <h3 className="text-xl font-bold text-white uppercase flex items-center">
+                    <h3 className="text-xl font-bold text-rpg-text uppercase flex items-center">
                       <BookOpen className="mr-2 w-5 h-5 text-rpg-accent"/> Skill Training
                     </h3>
                     <p className="text-xs text-rpg-muted mt-1">
-                      Max Rank: <span className="text-white">{maxRank}</span>
+                      Max Rank: <span className="text-rpg-text">{maxRank}</span>
                     </p>
                   </div>
                   <div className="text-right">
@@ -154,20 +154,20 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                       
                       return (
                         <div key={skill} className={`flex justify-between items-center p-2 rounded border ${added > 0 ? 'bg-rpg-800 border-rpg-600' : 'bg-rpg-900 border-rpg-800'}`}>
-                            <span className={`text-sm ${added > 0 ? 'text-white font-bold' : 'text-rpg-muted'}`}>
+                            <span className={`text-sm ${added > 0 ? 'text-rpg-text font-bold' : 'text-rpg-muted'}`}>
                               {skill}
                             </span>
                             <div className="flex items-center space-x-2">
                                <button 
                                  onClick={() => handleSkillChange(skill, -1)}
                                  disabled={added <= 0}
-                                 className="w-6 h-6 flex items-center justify-center bg-rpg-800 hover:bg-rpg-700 rounded text-white disabled:opacity-20"
+                                 className="w-6 h-6 flex items-center justify-center bg-rpg-800 hover:bg-rpg-700 rounded text-rpg-text disabled:opacity-20"
                                >-</button>
-                               <span className="w-6 text-center font-mono text-sm">{currentRank}</span>
+                               <span className="w-6 text-center font-mono text-sm text-rpg-text">{currentRank}</span>
                                <button 
                                  onClick={() => handleSkillChange(skill, 1)}
                                  disabled={pointsRemaining <= 0 || currentRank >= maxRank}
-                                 className="w-6 h-6 flex items-center justify-center bg-rpg-800 hover:bg-rpg-700 rounded text-white disabled:opacity-20"
+                                 className="w-6 h-6 flex items-center justify-center bg-rpg-800 hover:bg-rpg-700 rounded text-rpg-text disabled:opacity-20"
                                >+</button>
                             </div>
                         </div>
@@ -178,8 +178,8 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                 <div className="pt-4 flex justify-end">
                    <button 
                      onClick={handleConfirm}
-                     disabled={pointsRemaining > 0} // Optional: Force spending all points? Let's assume yes for good UX, or change to allow unused. Prompt didn't specify, but usually better to spend. Let's NOT force it to prevent getting stuck.
-                     className="bg-rpg-accent hover:bg-yellow-500 text-rpg-900 font-bold py-3 px-8 rounded shadow-lg flex items-center transition-colors"
+                     disabled={pointsRemaining > 0} 
+                     className="bg-rpg-accent hover:opacity-90 text-rpg-900 font-bold py-3 px-8 rounded shadow-lg flex items-center transition-colors"
                    >
                      Confirm Level Up
                    </button>

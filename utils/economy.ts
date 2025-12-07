@@ -1,4 +1,5 @@
 
+
 import { ALL_ITEMS, WEAPONS, ARMOR_SHIELDS, GEAR_SERVICES, ANIMALS_VEHICLES } from '../data/srdData';
 
 // Lookup an item by exact name
@@ -28,18 +29,20 @@ export function convertPrice(amount: number, from: 'cp' | 'sp' | 'gp' = 'gp', to
 }
 
 export function formatPrice(gpValue: number): string {
-    if (gpValue >= 1) {
-        // If it's a clean integer or simple decimal
-        if (Number.isInteger(gpValue)) return `${gpValue} gp`;
-        // Check if it's cleaner in sp
-        if (Number.isInteger(gpValue * 10)) return `${gpValue * 10} sp`;
-        return `${gpValue} gp`; // fallback
+    // Round to avoid floating point precision issues (e.g. 0.019999999)
+    const gp = Math.round(gpValue * 100) / 100;
+
+    if (gp >= 1) {
+        // If it's a whole number or generally high value, show GP
+        // We can show decimals if needed, but usually 1.5 gp is readable.
+        return `${gp} gp`;
+    } else if (gp >= 0.1) {
+        // Between 0.1 and 1 gp -> Display in SP
+        const sp = Math.round(gp * 10);
+        return `${sp} sp`;
     } else {
-        const sp = gpValue * 10;
-        if (sp >= 1) {
-             if (Number.isInteger(sp)) return `${sp} sp`;
-             return `${sp * 10} cp`;
-        }
-        return `${Math.round(gpValue * 100)} cp`;
+        // Less than 0.1 gp -> Display in CP
+        const cp = Math.round(gp * 100);
+        return `${cp} cp`;
     }
 }

@@ -1,12 +1,14 @@
-
 import React from 'react';
-import { Scroll, Shield, Sword, Box, PlusCircle, Book, Beer, Coins } from 'lucide-react';
+import { Scroll, Shield, Sword, Box, PlusCircle, Book, Handshake, Coins, Home, X, Sun, Moon } from 'lucide-react';
 
-export type MenuView = 'create' | 'wiki-weapons' | 'wiki-equipment' | 'wiki-various' | 'wiki-transports' | 'wiki-services' | 'wiki-economy';
+export type MenuView = 'create' | 'wiki-weapons' | 'wiki-equipment' | 'wiki-various' | 'wiki-transports' | 'wiki-services' | 'wiki-lodging' | 'wiki-economy';
 
 interface AppSidebarProps {
   currentView: MenuView;
   onViewChange: (view: MenuView) => void;
+  onClose?: () => void;
+  theme?: 'dark' | 'light';
+  toggleTheme?: () => void;
 }
 
 // Custom Horse Icon (Chess Knight style) since it's not in Lucide
@@ -41,7 +43,7 @@ const NavItem: React.FC<{
     className={`w-full flex items-center px-4 py-3 text-sm font-medium transition-all duration-200 
       ${active 
         ? 'bg-rpg-800 text-rpg-accent border-r-4 border-rpg-accent' 
-        : 'text-rpg-muted hover:bg-rpg-800 hover:text-white border-r-4 border-transparent'
+        : 'text-rpg-muted hover:bg-rpg-800 hover:text-rpg-text border-r-4 border-transparent'
       }
       ${indent ? 'pl-12' : ''}
     `}
@@ -51,11 +53,22 @@ const NavItem: React.FC<{
   </button>
 );
 
-export const AppSidebar: React.FC<AppSidebarProps> = ({ currentView, onViewChange }) => {
+export const AppSidebar: React.FC<AppSidebarProps> = ({ currentView, onViewChange, onClose, theme, toggleTheme }) => {
   return (
-    <div className="w-64 bg-rpg-900 border-r border-rpg-700 h-full flex flex-col shrink-0 z-20">
-      <div className="p-6 border-b border-rpg-700 flex flex-col items-center">
-        <h1 className="text-xl font-serif font-bold text-white tracking-wider text-center">AI Dungeon Master</h1>
+    <div className="bg-rpg-900 h-full flex flex-col shrink-0 z-20">
+      <div className="p-6 border-b border-rpg-700 flex flex-col items-center relative">
+        
+        {/* Mobile Close Button */}
+        {onClose && (
+            <button 
+                onClick={onClose}
+                className="absolute top-4 right-4 text-rpg-muted hover:text-rpg-text md:hidden"
+            >
+                <X size={20} />
+            </button>
+        )}
+
+        <h1 className="text-xl font-serif font-bold text-rpg-text tracking-wider text-center mt-2 md:mt-0">AI Dungeon Master</h1>
         <p className="text-xs text-rpg-muted mt-2 uppercase tracking-widest">Compendium & Tools</p>
       </div>
 
@@ -95,9 +108,15 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ currentView, onViewChang
         />
         <NavItem 
           label="Services" 
-          icon={<Beer size={18} />} 
+          icon={<Handshake size={18} />} 
           active={currentView === 'wiki-services'} 
           onClick={() => onViewChange('wiki-services')} 
+        />
+         <NavItem 
+          label="Lodging" 
+          icon={<Home size={18} />} 
+          active={currentView === 'wiki-lodging'} 
+          onClick={() => onViewChange('wiki-lodging')} 
         />
         <NavItem 
           label="Various" 
@@ -114,11 +133,21 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ currentView, onViewChang
 
       </div>
 
-      <div className="p-4 border-t border-rpg-700 bg-rpg-800/30">
+      <div className="p-4 border-t border-rpg-700 bg-rpg-800/30 flex items-center justify-between">
         <div className="flex items-center text-xs text-rpg-muted">
             <Book className="w-4 h-4 mr-2" />
-            <span>v1.0.1 Alpha</span>
+            <span>v1.2.0 Beta</span>
         </div>
+        
+        {toggleTheme && (
+            <button 
+                onClick={toggleTheme}
+                className="p-1.5 rounded-full bg-rpg-900 text-rpg-accent hover:bg-rpg-700 transition-colors border border-rpg-700"
+                title={theme === 'light' ? "Switch to Dark Mode" : "Switch to Light Mode"}
+            >
+                {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+            </button>
+        )}
       </div>
     </div>
   );

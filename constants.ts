@@ -1,4 +1,5 @@
 
+
 export type StatBlock = { strength: number; dexterity: number; constitution: number; intelligence: number; wisdom: number; charisma: number; };
 
 export const BASE_STATS: StatBlock = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
@@ -97,3 +98,11 @@ export const SKILL_ABILITY_MAP: Record<string, keyof StatBlock> = {
 
 export const BEGINNER_ARRAY = [18, 16, 14, 12, 10, 10];
 export const PRO_ARRAY = [14, 12, 12, 10, 10, 8];
+
+// Calculates total XP required to REACH the next level.
+// Formula: Total XP = 500 * level * (level + 1)
+// E.g., Level 1 -> 2 requires 1,000 Total XP.
+//       Level 2 -> 3 requires 3,000 Total XP.
+export const EXP_REQUIREMENT = (currentLevel: number): number => {
+    return 500 * currentLevel * (currentLevel + 1);
+};

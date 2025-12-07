@@ -7,6 +7,7 @@ export interface CharacterStats {
   hp: number;
   maxHp: number;
   xp: number;
+  ac: number; // Armor Class
   inventory: string[];
   stats: {
     strength: number;
@@ -19,10 +20,14 @@ export interface CharacterStats {
   skills: Record<string, number>;
 }
 
+export type EconomyDifficulty = 'Low' | 'Normal' | 'High';
+
 export interface WorldState {
   location: string;
   quest: string;
   timeOfDay: string;
+  economy?: EconomyDifficulty;
+  reputation?: Record<string, string>; // e.g. "Town Guard": "Friendly", "Thieves Guild": "Hostile"
 }
 
 export interface DiceRoll {
