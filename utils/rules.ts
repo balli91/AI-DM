@@ -1,7 +1,6 @@
-
-
 import { ALL_ITEMS } from '../data/srdData';
 import { CharacterStats } from '../types';
+import { FEATS_DB, FeatDefinition } from '../constants';
 
 export interface ParsedItem {
   originalString: string;
@@ -55,6 +54,11 @@ export const getAbilityMod = (score: number): number => {
   return Math.floor((score - 10) / 2);
 };
 
+// Helper to check if a character has a feat (handling "Feat (Target)" format)
+export const hasFeat = (character: CharacterStats, featName: string): boolean => {
+    return character.feats.some(f => f === featName || f.startsWith(`${featName} (`));
+};
+
 // --- Dice Rolling Logic ---
 export const rollDiceExpression = (expression: string): { total: number, breakdown: string, rawDie: number } => {
     // Basic parser for XdY+Z or XdY-Z
@@ -101,8 +105,7 @@ export const calculateBAB = (cls: string, level: number): number => {
 
 export const getIterativeAttacks = (bab: number): number[] => {
     // 3.5 Rules: You get an additional attack for every 5 points of BAB above 0.
-    // e.g. +6 -> +6/+1. +11 -> +11/+6/+1.
-    // Max 4 attacks from BAB (capped at 20th level usually +20/+15/+10/+5)
+    // e.g. +6/+1, +11/+6/+1, +16/+11/+6/+1
     const attacks = [bab];
     let nextBonus = bab - 5;
     
@@ -112,6 +115,61 @@ export const getIterativeAttacks = (bab: number): number[] => {
         nextBonus -= 5;
     }
     return attacks;
+};
+
+// --- Initiative Calculation (v1.6) ---
+export const calculateInitiative = (character: CharacterStats): { total: number, dexMod: number, miscMod: number, notes: string[] } => {
+    const dexMod = getAbilityMod(character.stats.dexterity);
+    let miscMod = 0;
+    const notes: string[] = [];
+
+    if (hasFeat(character, "Improved Initiative")) {
+        miscMod += 4;
+        notes.push("Improved Initiative (+4)");
+    }
+    
+    return {
+        total: dexMod + miscMod,
+        dexMod,
+        miscMod,
+        notes
+    };
+};
+
+// --- Feat Prerequisites Check (v1.6) ---
+export const checkFeatPrerequisites = (character: CharacterStats, featName: string): boolean => {
+    const feat = FEATS_DB.find(f => f.name === featName);
+    if (!feat) return false;
+    
+    // Check if player already has this exact feat (ignoring target for now, usually you can't take same feat twice unless specified)
+    // For feats like Weapon Focus, you CAN take it multiple times for different weapons.
+    // Simplification: In this UI, if they have "Weapon Focus (Sword)", we might show "Weapon Focus" again to allow "Weapon Focus (Axe)".
+    // But standard DB check usually blocks "unique" feats.
+    // For now, if it allows targets, we allow re-selection. If not, we block.
+    if (!feat.targetType && hasFeat(character, featName)) return false; 
+    
+    const p = feat.prerequisites;
+    if (!p) return true;
+
+    if (p.bab && calculateBAB(character.class, character.level) < p.bab) return false;
+    if (p.str && character.stats.strength < p.str) return false;
+    if (p.dex && character.stats.dexterity < p.dex) return false;
+    if (p.con && character.stats.constitution < p.con) return false;
+    if (p.int && character.stats.intelligence < p.int) return false;
+    if (p.wis && character.stats.wisdom < p.wis) return false;
+    if (p.cha && character.stats.charisma < p.cha) return false;
+    
+    if (p.class && character.class !== p.class) return false;
+    if (p.level && character.level < p.level) return false;
+
+    // Updated: Check for multiple required feats
+    if (p.requiredFeats) {
+        for (const requiredFeat of p.requiredFeats) {
+            if (!hasFeat(character, requiredFeat)) return false;
+        }
+    }
+
+    return true;
 };
 
 // --- Inventory Parsing ---
@@ -131,7 +189,6 @@ export const parseInventory = (inventoryList: string[]): ParsedItem[] => {
        if (itemStr.includes('gp')) gpVal = val;
        if (itemStr.includes('sp')) gpVal = val / 10;
        if (itemStr.includes('cp')) gpVal = val / 100;
-       // Standard 50 coins = 1 lb
        const weight = val * 0.02;
 
        return {
@@ -189,13 +246,10 @@ export const parseInventory = (inventoryList: string[]): ParsedItem[] => {
 
 // --- Encumbrance Calculation ---
 export const calculateEncumbrance = (str: number, currentWeight: number): EncumbranceState => {
-  // D&D 3.5 Carrying Capacity Approx
   let lightLoad = 0;
-  // Linear approx for UI scaling (STR * 3.33 for light)
   if (str <= 10) lightLoad = str * 3.3; 
-  else lightLoad = (str * 3.3) * (1 + (str-10)*0.1); // Mild scaling
+  else lightLoad = (str * 3.3) * (1 + (str-10)*0.1); 
   
-  // Simplified logic for game feel
   const heavyLoad = str * 10; 
   const mediumLoad = heavyLoad * 0.66;
   const lightLimit = heavyLoad * 0.33;
@@ -208,46 +262,49 @@ export const calculateEncumbrance = (str: number, currentWeight: number): Encumb
   return { currentWeight, lightLimit, mediumLoad, heavyLoad, status };
 };
 
-// --- AC Calculation ---
+// --- AC Calculation (Updated v1.6) ---
 export const calculateACBreakdown = (character: CharacterStats, inventory: ParsedItem[]): ACBreakdown => {
   const base = 10;
   const dexMod = getAbilityMod(character.stats.dexterity);
   const sizeMod = character.race === 'Halfling' || character.race === 'Gnome' ? 1 : 0;
+  let featMod = 0;
+  const notes: string[] = [];
   
-  // Find Best Armor in Inventory
   const armors = inventory.filter(i => i.category === 'Armor');
   const equippedArmor = armors.length > 0 
     ? armors.reduce((prev, current) => (prev.armor_bonus || 0) > (current.armor_bonus || 0) ? prev : current) 
     : null;
 
-  // Find Best Shield in Inventory
   const shields = inventory.filter(i => i.category === 'Shield');
   const equippedShield = shields.length > 0
     ? shields.reduce((prev, current) => (prev.armor_bonus || 0) > (current.armor_bonus || 0) ? prev : current)
     : null;
 
-  // Find Weapons to check for Two-Handed
   const weapons = inventory.filter(i => i.category === 'Weapon');
   
   let armorBonus = equippedArmor?.armor_bonus || 0;
   let maxDex = equippedArmor?.max_dex ?? 99;
   let shieldBonus = equippedShield?.armor_bonus || 0;
   
-  const notes: string[] = [];
-
-  // Logic: Max Dex
   const allowableDex = Math.min(dexMod, maxDex);
   if (dexMod > maxDex) notes.push(`Dex bonus capped by ${equippedArmor?.name} (Max ${maxDex})`);
 
-  // Logic: 2H Weapon Conflict (Strict Enforcement v1.4.0)
+  // 2H Weapon Conflict
   const hasTwoHanded = weapons.some(w => w.properties?.includes('Two-Handed'));
   if (hasTwoHanded && shieldBonus > 0) {
     notes.push("Shield bonus disabled due to Two-Handed Weapon.");
-    shieldBonus = 0; // Strictly set to 0 for calculation
+    shieldBonus = 0; 
   }
 
-  // Calculate Total (Optimistic)
-  const total = base + allowableDex + armorBonus + shieldBonus + sizeMod;
+  // Feat: Dodge (+1 AC)
+  if (hasFeat(character, "Dodge")) {
+      featMod += 1;
+      notes.push("Dodge (+1)");
+  }
+  
+  // Feat: Two-Weapon Defense (Not in v1.6 list but checking logic structure)
+  
+  const total = base + allowableDex + armorBonus + shieldBonus + sizeMod + featMod;
 
   return {
     base,
@@ -255,7 +312,7 @@ export const calculateACBreakdown = (character: CharacterStats, inventory: Parse
     armorBonus,
     shieldBonus,
     sizeMod,
-    miscMod: 0,
+    miscMod: featMod,
     total,
     armorName: equippedArmor?.name || 'None',
     shieldName: equippedShield?.name || 'None',
@@ -264,14 +321,11 @@ export const calculateACBreakdown = (character: CharacterStats, inventory: Parse
   };
 };
 
-// --- Base Save Bonuses (Updated to D&D 3.5 Specifics) ---
+// --- Base Save Bonuses ---
 export const getBaseSaves = (cls: string, level: number) => {
-  // Good Save Formula: 2 + level/2
-  // Poor Save Formula: level/3
   const good = Math.floor(2 + level / 2);
   const bad = Math.floor(level / 3);
 
-  // Configuration map strictly adhering to user specifications
   const map: Record<string, { fort: boolean, ref: boolean, will: boolean }> = {
     'Barbarian': { fort: true, ref: false, will: false },
     'Bard':      { fort: false, ref: true, will: true },
@@ -279,7 +333,7 @@ export const getBaseSaves = (cls: string, level: number) => {
     'Druid':     { fort: true, ref: false, will: true },
     'Fighter':   { fort: true, ref: false, will: false },
     'Monk':      { fort: true, ref: true, will: true },
-    'Paladin':   { fort: true, ref: false, will: true }, // Updated: Good Will Save
+    'Paladin':   { fort: true, ref: false, will: true },
     'Ranger':    { fort: true, ref: true, will: false },
     'Rogue':     { fort: false, ref: true, will: false },
     'Sorcerer':  { fort: false, ref: false, will: true },
@@ -294,7 +348,7 @@ export const getBaseSaves = (cls: string, level: number) => {
   };
 };
 
-// --- Full Save Breakdown Calculation ---
+// --- Full Save Breakdown Calculation (Updated v1.6) ---
 export const calculateSaveBreakdown = (character: CharacterStats, inventory: ParsedItem[]): SaveBreakdown => {
   const base = getBaseSaves(character.class, character.level);
   const conMod = getAbilityMod(character.stats.constitution);
@@ -306,10 +360,8 @@ export const calculateSaveBreakdown = (character: CharacterStats, inventory: Par
   let miscWill = 0;
   const notes: string[] = [];
 
-  // 1. Scan Inventory for modifiers
   inventory.forEach(item => {
     const name = item.name.toLowerCase();
-    // Cloak of Resistance
     if (name.includes('cloak of resistance')) {
          const match = item.name.match(/\+(\d+)/);
          const bonus = match ? parseInt(match[1]) : 1;
@@ -318,21 +370,18 @@ export const calculateSaveBreakdown = (character: CharacterStats, inventory: Par
          miscWill += bonus;
          notes.push(`${item.name} (+${bonus})`);
     }
-    // Stone of Good Luck
     if (name.includes('stone of good luck') || name.includes('luckstone')) {
          miscFort += 1; miscRef += 1; miscWill += 1;
          notes.push("Luckstone (+1)");
     }
   });
 
-  // 2. Racial Bonuses (Halfling Luck)
   if (character.race === 'Halfling') {
       miscFort += 1; miscRef += 1; miscWill += 1;
       notes.push("Halfling Luck (+1)");
   }
 
-  // 3. Class Features
-  // Paladin Divine Grace (Level 2+)
+  // Paladin Divine Grace
   if (character.class === 'Paladin' && character.level >= 2) {
       const chaMod = getAbilityMod(character.stats.charisma);
       if (chaMod > 0) {
@@ -342,6 +391,11 @@ export const calculateSaveBreakdown = (character: CharacterStats, inventory: Par
           notes.push(`Divine Grace (+${chaMod})`);
       }
   }
+  
+  // Feat Bonuses (v1.6)
+  if (hasFeat(character, "Great Fortitude")) { miscFort += 2; notes.push("Great Fortitude (+2)"); }
+  if (hasFeat(character, "Lightning Reflexes")) { miscRef += 2; notes.push("Lightning Reflexes (+2)"); }
+  if (hasFeat(character, "Iron Will")) { miscWill += 2; notes.push("Iron Will (+2)"); }
 
   return {
       fort: { total: base.fort + conMod + miscFort, base: base.fort, ability: conMod, misc: miscFort },

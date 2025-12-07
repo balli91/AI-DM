@@ -1,5 +1,7 @@
 
 
+
+
 import React, { useState, useRef, useEffect } from 'react';
 import { GameStatus, GameState, Message, CharacterStats, EconomyDifficulty } from './types';
 import { initGame, processTurn } from './services/geminiService';
@@ -291,7 +293,8 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
         const pkg = getStartingPackage(cls, race, economy);
         const eqList = pkg.items.map(i => i.qty > 1 ? `${i.name} (${i.qty})` : i.name);
         eqList.push(`${pkg.coins} gp`);
-        const charData: Partial<CharacterStats> = { name, race, class: cls, stats: finalStats, level: 1, maxHp: finalHp, hp: finalHp, skills: skillRanks };
+        // Feats start empty for now, or could grant Racial feats if we added logic.
+        const charData: Partial<CharacterStats> = { name, race, class: cls, stats: finalStats, level: 1, maxHp: finalHp, hp: finalHp, skills: skillRanks, feats: [] };
         onStart(charData, background, eqList, setting, economy);
     };
 
@@ -689,7 +692,7 @@ const App: React.FC = () => {
     } catch (e) { console.error(e); setStatus(GameStatus.ERROR); }
   };
 
-  const handleLevelUpConfirm = async (newMaxHp: number, newSkills: Record<string, number>, newStats?: StatBlock) => {
+  const handleLevelUpConfirm = async (newMaxHp: number, newSkills: Record<string, number>, newStats: StatBlock, newFeats: string[]) => {
     if (!gameState) return;
     const newLevel = gameState.character.level + 1;
     
@@ -703,17 +706,19 @@ const App: React.FC = () => {
         maxHp: newMaxHp, 
         hp: currentHp,
         skills: newSkills,
-        stats: newStats || gameState.character.stats
+        stats: newStats || gameState.character.stats,
+        feats: newFeats || gameState.character.feats
     };
 
     setGameState({ ...gameState, character: updatedCharacter });
     setShowLevelUpModal(false);
     
-    // Create detailed message for AI synchronization (v1.5.1 requirement: update dependent stats)
+    // Create detailed message for AI synchronization (v1.6 requirement: update all stats including feats)
     const statsDetail = newStats ? `Stats updated: STR ${newStats.strength}, DEX ${newStats.dexterity}, CON ${newStats.constitution}, INT ${newStats.intelligence}, WIS ${newStats.wisdom}, CHA ${newStats.charisma}.` : "Stats unchanged.";
     const skillDetail = `Skill ranks updated.`;
+    const featDetail = newFeats.length > (gameState.character.feats?.length || 0) ? `New Feat: ${newFeats[newFeats.length-1]}.` : "No new feats.";
 
-    const systemUpdateMsg = `[SYSTEM UPDATE] Player manually leveled up to Level ${newLevel}. New MaxHP: ${newMaxHp}. ${statsDetail} ${skillDetail} Please update derived stats (AC, Saving Throws, Attack Bonuses) in your internal state.`;
+    const systemUpdateMsg = `[SYSTEM UPDATE] Player manually leveled up to Level ${newLevel}. New MaxHP: ${newMaxHp}. ${statsDetail} ${skillDetail} ${featDetail} Please update derived stats (AC, Saving Throws, Attack Bonuses, Feat Effects) in your internal state.`;
     
     setMessages(prev => [...prev, { id: 'lvl-sys', sender: 'system', text: `Level Up! Reached Level ${newLevel}.`, timestamp: Date.now() }]);
     

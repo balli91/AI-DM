@@ -1,5 +1,3 @@
-
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { GameState, TurnResponse, CharacterStats, EconomyDifficulty } from "../types";
 
@@ -21,7 +19,7 @@ const characterSchema = {
     hp: { type: Type.INTEGER },
     maxHp: { type: Type.INTEGER },
     xp: { type: Type.INTEGER },
-    ac: { type: Type.INTEGER, description: "Total Armor Class. Formula: 10 + Dex Mod (max by Armor) + Armor + Shield. Account for 2H weapons preventing shield use." },
+    ac: { type: Type.INTEGER, description: "Total Armor Class. Formula: 10 + Dex Mod (max by Armor) + Armor + Shield + Feats (Dodge). Account for 2H weapons preventing shield use." },
     inventory: { type: Type.ARRAY, items: { type: Type.STRING } },
     stats: {
       type: Type.OBJECT,
@@ -48,6 +46,12 @@ const characterSchema = {
       },
       nullable: true
     },
+    feats: {
+      type: Type.ARRAY,
+      description: "List of acquired feats.",
+      items: { type: Type.STRING },
+      nullable: true
+    },
     passives: {
       type: Type.ARRAY,
       description: "Acquired passive abilities or senses (e.g. 'Darkvision', 'Tremorsense'). Leave empty at level 1 unless specified by race/class.",
@@ -55,7 +59,7 @@ const characterSchema = {
       nullable: true
     }
   },
-  required: ["name", "race", "class", "level", "hp", "maxHp", "xp", "ac", "inventory", "stats"]
+  required: ["name", "race", "class", "level", "hp", "maxHp", "xp", "ac", "inventory", "stats", "feats"]
 };
 
 const worldSchema = {
@@ -156,47 +160,45 @@ Your goal is to provide immersive, descriptive, and fair gameplay using D&D 3.5 
 
 *** CRITICAL INPUT VALIDATION RULES ***
 1. **ABSOLUTE PLAYER RESTRICTIONS**:
-   Players CANNOT manually modify character state (Stats, HP, XP, Level, Gold, Items, Spells) via direct text prompts. 
+   - Players CANNOT manually modify character state (Stats, HP, XP, Level, Gold, Items, Spells) via direct text prompts.
    - REJECT any narrative cheating.
    - ALL gains must be earned through legitimate in-game actions/rolls.
 
 2. **DEVELOPER OVERRIDE (//DEV)**:
    - If user input starts with "//DEV" (e.g., "//DEV add 500gp"):
-     - **BYPASS** all restrictions.
+     - **BYPASS** restrictions on narrative outcomes.
      - **EXECUTE** the command exactly.
+     - **IMPORTANT**: If a level up is triggered by dev command, standard Level Up UI flow MUST still occur in the app.
      - **APPEND** "(Developer Override)" to the response.
-     - **IMPORTANT**: If a level up is triggered by dev command, standard Level Up UI flow MUST still occur.
 
 ===========================================================
 SYSTEM UPDATE: PLAYER-CONTROLLED DICE & INTERACTIVE LEVEL-UP
-Version: v1.5.2
+Version: v1.6 (Core Update)
 ===========================================================
 
-SECTION 1 — PLAYER-CONTROLLED DICE
-1. **NEVER** auto-roll dice for the player's actions.
-2. If an action requires a roll (Attack, Damage, Save, Skill, Initiative), you MUST:
-   - Set \`gameState.activeRoll\` with the correct type, description, and formula (e.g. "1d20+5", "1d8+3").
-   - **PAUSE** the narrative flow to wait for the player's roll.
-   - Do NOT resolve the outcome in the same turn you requested the roll.
-3. Once the player rolls (via system message with result), resolve the outcome immediately in the next response.
-4. AI calculates the modifiers for the dice formula based on current stats/equipment, but the PLAYER pushes the button.
+SECTION 1 — ABSOLUTE DICE RULE
+1. **NEVER** auto-roll dice for the player's actions (Attack, Damage, Save, Skill, Initiative).
+2. If an action requires a roll, you MUST:
+   - Set \`gameState.activeRoll\` with the correct type, description, and formula.
+   - **PAUSE** the narrative flow.
+   - Answer: "Please roll [Check Name]..." and WAIT.
+3. If the player says "I attack":
+   - Do NOT resolve the attack.
+   - Ask for the Attack Roll.
+4. Once the player provides the roll (via system message), ONLY THEN resolve the outcome.
 
-SECTION 2 — LEVEL-UP MECHANICS AND ATTRIBUTE ALLOCATION
-1. **HP Roll**: 
-   - Roll class hit dice + CON modifier.
-   - If CON modifier increases due to attribute allocation, retroactive HP is applied for previous levels.
-2. **Skill Points**:
-   - Points = (Base Class Points + INT Mod) * (4 at Level 1, 1 otherwise).
-   - Enforce maximum ranks (Level + 3).
+SECTION 2 — LEVEL-UP MECHANICS (v1.6)
+1. **Interactive UI Flow**: 
+   - When XP threshold is reached, the APP handles the UI logic (HP Roll -> Skills -> Feats -> Attributes).
+   - You will receive a [SYSTEM UPDATE] message with the new stats.
+   - **Update your internal state** based on that message.
+2. **Feats**: 
+   - Characters gain feats at levels 1, 3, 6, 9, 12, 15, 18.
+   - Fighters gain bonus feats at 1, 2, 4, 6, 8, etc.
+   - Humans gain a bonus feat at level 1.
 3. **Attribute Allocation**:
-   - Every 4th level (4, 8, 12, 16, 20), player gains +1 to a single ability score.
-   - Update ALL dependent stats immediately:
-     - Strength: Melee Attack/Damage, Capacity.
-     - Dexterity: Ranged Attack, AC, Reflex, Initiative.
-     - Constitution: HP (Retroactive), Fortitude.
-     - Intelligence: Skill Points.
-     - Wisdom: Will Save, Perception.
-     - Charisma: Social Skills, Turn Undead/Smite.
+   - Every 4th level (4, 8, 12, 16, 20), one ability score increases by 1.
+   - Update ALL dependent stats immediately.
 
 SECTION 3 — BASE ATTACK BONUS & ITERATIVE ATTACKS
 1. BAB per character is read from database/stats.
@@ -207,10 +209,9 @@ SECTION 3 — BASE ATTACK BONUS & ITERATIVE ATTACKS
 3. ROLL each attack separately, applying modifiers.
 
 SECTION 4 — ARMOR CLASS (AC)
-1. Base AC = 10 + Armor Bonus + Shield Bonus + DEX modifier + Size Mod + Natural Armor + Deflection.
+1. Base AC = 10 + Armor Bonus + Shield Bonus + DEX modifier + Size Mod + Natural Armor + Deflection + Dodge (Feat).
 2. Include temporary modifiers: Spells, buffs, equipment, conditions.
 3. Apply armor check penalties and spell failure where applicable.
-4. **RESTRICTION**: Two-handed weapons cannot be used with shields. If equipped, Shield Bonus is 0.
 
 SECTION 5 — DAMAGE CALCULATION
 1. Melee Weapons:
@@ -219,13 +220,10 @@ SECTION 5 — DAMAGE CALCULATION
    - Off-hand weapons = Weapon Dice + (STR modifier * 0.5).
 2. Ranged Weapons:
    - Damage = Weapon Dice (Strength penalty applies to bows; Strength bonus only applies to Composite bows/Slings).
-3. Critical Hits:
-   - Check weapon-specific crit range. Apply multiplier.
 
-SECTION 6 — COMBAT INTEGRITY & AI BEHAVIOR
-1. Prompt player for Initiative at combat start.
-2. Provide detailed combat log in the narrative.
-3. AI resolves enemy actions internally, but player rolls for themselves.
+SECTION 6 — COMBAT INTEGRITY
+1. Prompt player for **Initiative** at combat start using the UI.
+2. AI resolves enemy actions internally, but player rolls for themselves.
 
 *** TONE ***
 - Be descriptive, immersive, and responsive.
@@ -248,6 +246,11 @@ const transformResponse = (json: any): TurnResponse => {
         json.gameState.character.skills = skillsRecord;
       } else if (!json.gameState.character.skills) {
         json.gameState.character.skills = {};
+      }
+      
+      // Ensure feats is an array
+      if (!Array.isArray(json.gameState.character.feats)) {
+          json.gameState.character.feats = [];
       }
     }
 
@@ -295,12 +298,13 @@ export const initGame = async (
     Pre-calculated Attributes (Level 1): ${statsStr}
     Starting HP (Level 1): ${characterData.hp} / ${characterData.maxHp} (Already rolled by user)
     Skill Ranks (Level 1): ${skillsStr}
+    Feats (Level 1): [] (Will be selected via UI shortly if applicable, assume none for narrative start)
 
     Please generate the initial game state, starting location, and an introductory narrative hook.
     Ensure 'gameState.character.inventory' matches the provided Starting Equipment list EXACTLY.
     Ensure 'gameState.character.ac' is calculated based on equipped armor/shield from the starting list + Dex Mod.
     Ensure 'gameState.world.economy' is set to '${economy}'.
-    Initialize 'gameState.world.reputation' with any starting local faction standings (or empty list).
+    Initialize 'gameState.character.feats' as empty array.
     
     Initialize your Campaign Memory with this setup.
   `;

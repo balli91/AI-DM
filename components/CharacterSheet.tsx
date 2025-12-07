@@ -1,12 +1,11 @@
-
 import React, { useMemo, useState } from 'react';
 import { GameState } from '../types';
 import { 
   Shield, Zap, Heart, Brain, Sparkles, User, Sword, Activity, 
-  AlertTriangle, Skull, Wind, Eye, ArrowUpDown, ChevronDown, ChevronUp, Info
+  AlertTriangle, Skull, Wind, Eye, ArrowUpDown, ChevronDown, ChevronUp, Info, Star
 } from 'lucide-react';
-import { SKILL_ABILITY_MAP, SKILL_DESCRIPTIONS } from '../constants';
-import { parseInventory, calculateACBreakdown, getAbilityMod, calculateEncumbrance, calculateSaveBreakdown, calculateBAB, getIterativeAttacks } from '../utils/rules';
+import { SKILL_ABILITY_MAP, SKILL_DESCRIPTIONS, FEATS_DB } from '../constants';
+import { parseInventory, calculateACBreakdown, getAbilityMod, calculateEncumbrance, calculateSaveBreakdown, calculateBAB, getIterativeAttacks, calculateInitiative, hasFeat } from '../utils/rules';
 
 interface CharacterSheetProps {
   gameState: GameState;
@@ -31,6 +30,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
   const parsedInventory = useMemo(() => parseInventory(character.inventory), [character.inventory]);
   const acData = useMemo(() => calculateACBreakdown(character, parsedInventory), [character, parsedInventory]);
   const saves = useMemo(() => calculateSaveBreakdown(character, parsedInventory), [character, parsedInventory]);
+  const initData = useMemo(() => calculateInitiative(character), [character]);
   
   // Weights
   const totalWeight = parsedInventory.reduce((acc, i) => acc + i.totalWeight, 0);
@@ -45,8 +45,6 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
   const wisMod = getAbilityMod(character.stats.wisdom);
   const chaMod = getAbilityMod(character.stats.charisma);
 
-  const initiative = dexMod; // + Misc if any
-
   // Skills Sorting & Details State
   const [skillSort, setSkillSort] = useState<'name' | 'bonus'>('name');
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
@@ -58,13 +56,19 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
         // Bonus Sort
         const getMod = (skill: string) => {
              const ability = SKILL_ABILITY_MAP[skill];
-             if(ability === 'strength') return strMod;
-             if(ability === 'dexterity') return dexMod;
-             if(ability === 'constitution') return conMod;
-             if(ability === 'intelligence') return intMod;
-             if(ability === 'wisdom') return wisMod;
-             if(ability === 'charisma') return chaMod;
-             return 0;
+             let m = 0;
+             if(ability === 'strength') m = strMod;
+             if(ability === 'dexterity') m = dexMod;
+             if(ability === 'constitution') m = conMod;
+             if(ability === 'intelligence') m = intMod;
+             if(ability === 'wisdom') m = wisMod;
+             if(ability === 'charisma') m = chaMod;
+             
+             // Feat Bonus (Skill Focus)
+             if (character.feats?.some(f => f === `Skill Focus (${skill})`)) {
+                 m += 3;
+             }
+             return m;
         };
         const rankA = character.skills?.[a] || 0;
         const rankB = character.skills?.[b] || 0;
@@ -72,7 +76,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
         const totalB = rankB + getMod(b);
         return totalB - totalA; // Descending
     });
-  }, [skillSort, character.skills, strMod, dexMod, conMod, intMod, wisMod, chaMod]);
+  }, [skillSort, character.skills, character.feats, strMod, dexMod, conMod, intMod, wisMod, chaMod]);
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-8 bg-rpg-950 custom-scrollbar animate-in fade-in duration-300">
@@ -116,13 +120,19 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                     <div className="flex justify-between"><span>Shield</span> <span>+{acData.shieldBonus}</span></div>
                     <div className="flex justify-between"><span>Dex</span> <span>+{acData.dexMod}</span></div>
                     <div className="flex justify-between"><span>Size</span> <span>+{acData.sizeMod}</span></div>
+                    {acData.miscMod !== 0 && <div className="flex justify-between text-rpg-accent"><span>Feat/Misc</span> <span>+{acData.miscMod}</span></div>}
                     {acData.notes.length > 0 && <div className="text-[10px] text-rpg-warning mt-1">{acData.notes[0]}</div>}
                 </div>
              </div>
 
-             <div className="text-center">
+             <div className="text-center cursor-help group relative">
                 <div className="text-xs text-rpg-muted uppercase font-bold">Initiative</div>
-                <div className="text-2xl font-bold text-rpg-text">{initiative >= 0 ? '+' : ''}{initiative}</div>
+                <div className="text-2xl font-bold text-rpg-text">{initData.total >= 0 ? '+' : ''}{initData.total}</div>
+                {initData.notes.length > 0 && (
+                     <div className="absolute top-full right-0 mt-2 w-32 bg-rpg-800 border border-rpg-700 p-2 rounded shadow-xl hidden group-hover:block z-50 text-xs text-left">
+                         {initData.notes.map((n,i) => <div key={i} className="text-rpg-accent">{n}</div>)}
+                     </div>
+                )}
              </div>
 
              <div className="text-center">
@@ -187,19 +197,45 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                 </div>
              </div>
 
-             {/* Passive Skills / Senses */}
+             {/* Feats & Passives */}
              <div className="panel-base p-4 min-h-[5rem] flex flex-col justify-center">
-                <h3 className="text-xs font-bold text-rpg-muted uppercase mb-1">Passive Senses</h3>
-                {character.passives && character.passives.length > 0 ? (
-                    <div className="space-y-1 mt-2">
+                <h3 className="text-xs font-bold text-rpg-muted uppercase mb-2 flex items-center justify-between">
+                    <span>Feats & Traits</span>
+                    <Star className="w-3 h-3 text-rpg-warning" />
+                </h3>
+                
+                {character.feats && character.feats.length > 0 ? (
+                    <div className="space-y-1">
+                        {character.feats.map((featString, i) => {
+                             // Handle params like "Weapon Focus (Longsword)"
+                             const baseName = featString.split('(')[0].trim();
+                             const featDef = FEATS_DB.find(f => f.name === baseName);
+                             return (
+                                <div key={i} className="group relative">
+                                    <div className="text-sm font-bold text-rpg-text flex items-center p-1 hover:bg-rpg-800 rounded cursor-help">
+                                        <div className="w-1.5 h-1.5 bg-rpg-accent rounded-full mr-2"></div> 
+                                        {featString}
+                                    </div>
+                                    <div className="absolute left-0 bottom-full mb-1 w-48 bg-rpg-900 border border-rpg-700 p-2 rounded shadow-xl hidden group-hover:block z-50 text-xs">
+                                        <div className="font-bold text-rpg-accent">{baseName}</div>
+                                        <div className="text-rpg-muted">{featDef?.description || "A special ability."}</div>
+                                    </div>
+                                </div>
+                             );
+                        })}
+                    </div>
+                ) : (
+                    <div className="text-xs text-rpg-muted italic opacity-50 text-center py-2">No feats acquired.</div>
+                )}
+                
+                {character.passives && character.passives.length > 0 && (
+                    <div className="mt-3 pt-2 border-t border-rpg-700/50 space-y-1">
                         {character.passives.map((p, i) => (
-                             <div key={i} className="text-sm font-bold text-rpg-text flex items-center">
-                                <Eye className="w-3 h-3 mr-2 text-rpg-accent" /> {p}
+                             <div key={i} className="text-xs text-rpg-muted flex items-center">
+                                <Eye className="w-3 h-3 mr-2 text-rpg-accent opacity-70" /> {p}
                              </div>
                         ))}
                     </div>
-                ) : (
-                    <div className="text-xs text-rpg-muted italic opacity-50 text-center py-2 border border-dashed border-rpg-800 rounded">None active</div>
                 )}
              </div>
           </div>
@@ -227,9 +263,19 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                          const attackStat = isMelee ? (isFinesse && dexMod > strMod ? dexMod : strMod) : dexMod;
                          const damageStat = isMelee ? strMod : 0; // Simplified
                          
+                         // Weapon Focus Bonus check
+                         const hasFocus = character.feats?.some(f => f === `Weapon Focus (${weapon.name})`);
+                         const featAttackBonus = hasFocus ? 1 : 0;
+                         
+                         // Weapon Specialization
+                         const hasSpec = character.feats?.some(f => f === `Weapon Specialization (${weapon.name})`);
+                         const featDamageBonus = hasSpec ? 2 : 0;
+                         
+                         // Point Blank Shot note? Not numeric on sheet usually, situational.
+
                          const iterativeAttacks = getIterativeAttacks(bab);
                          const attackStrings = iterativeAttacks.map(b => {
-                            const total = b + attackStat + (weapon.qty > 1 ? 0 : 0); // Placeholder for magic weapon check if we add it later
+                            const total = b + attackStat + (weapon.qty > 1 ? 0 : 0) + featAttackBonus;
                             return `${total >= 0 ? '+' : ''}${total}`;
                          });
 
@@ -249,7 +295,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                                     <div className="flex items-center space-x-2">
                                         <div className="text-xs text-rpg-muted">Dmg</div>
                                         <div className="bg-rpg-900 border border-rpg-600 px-2 py-1 rounded text-sm font-bold text-rpg-text" title="Damage">
-                                            {weapon.damage_dice} {damageStat > 0 ? `+${damageStat}` : ''}
+                                            {weapon.damage_dice} {damageStat + featDamageBonus > 0 ? `+${damageStat + featDamageBonus}` : ''}
                                         </div>
                                     </div>
                                 </div>
@@ -345,8 +391,14 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                              if(ability === 'wisdom') mod = wisMod;
                              if(ability === 'charisma') mod = chaMod;
 
+                             // Apply Feat Bonuses
+                             let featBonus = 0;
+                             if (character.feats?.includes(`Skill Focus (${skill})`)) {
+                                 featBonus = 3;
+                             }
+
                              const rank = character.skills?.[skill] || 0;
-                             const total = rank + mod;
+                             const total = rank + mod + featBonus;
                              
                              const isExpanded = expandedSkill === skill;
 
@@ -374,6 +426,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                                             <div className="flex justify-between text-[10px] text-rpg-muted uppercase tracking-wider">
                                                 <span>Rank: {rank}</span>
                                                 <span>Mod: {mod >= 0 ? '+' : ''}{mod}</span>
+                                                {featBonus > 0 && <span>Feat: +{featBonus}</span>}
                                             </div>
                                         </div>
                                     )}

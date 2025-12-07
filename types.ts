@@ -19,6 +19,7 @@ export interface CharacterStats {
     charisma: number;
   };
   skills: Record<string, number>;
+  feats: string[]; // Acquired feats
   passives?: string[]; // Acquired passive traits (e.g. Darkvision, Tremorsense)
 }
 
