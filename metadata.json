@@ -1,0 +1,5 @@
+{
+  "name": "AI Dungeon Master",
+  "description": "An immersive, infinite role-playing game where Gemini acts as your Dungeon Master, managing the story, combat, and your character's stats in real-time.",
+  "requestFramePermissions": []
+}
