@@ -1,4 +1,5 @@
 
+
 import React, { useState, useRef, useEffect } from 'react';
 import { GameStatus, GameState, Message, CharacterStats, EconomyDifficulty } from './types';
 import { initGame, processTurn } from './services/geminiService';
@@ -11,6 +12,7 @@ import { AppSidebar, MenuView } from './components/AppSidebar';
 import { Encyclopedia } from './components/Encyclopedia';
 import { getStartingPackage, StartingPackage } from './data/startingGear';
 import { formatPrice } from './utils/economy';
+import { rollDiceExpression } from './utils/rules';
 import { Loader2, Send, Sword, Skull, Heart, Menu, X, Scroll, Backpack, Dice5, ChevronRight, RefreshCw, User, Edit, ArrowRight, Dices, GraduationCap, Medal, Eye, Coins, Book, Map, Crown, Shield, Zap, Sparkles } from 'lucide-react';
 import { 
   StatBlock, 
@@ -22,7 +24,8 @@ import {
   SKILL_ABILITY_MAP, 
   BEGINNER_ARRAY, 
   PRO_ARRAY,
-  EXP_REQUIREMENT
+  EXP_REQUIREMENT,
+  CLASS_SKILL_POINTS
 } from './constants';
 
 const LoadingScreen = ({ message }: { message: string }) => (
@@ -117,14 +120,6 @@ const generateName = (race: string): string => {
   const name = names[Math.floor(Math.random() * names.length)];
   const suffix = ["the Brave", "Stormborn", "Ironfoot", "Shadow", "Lightbringer", "Starwalker", "of the North"][Math.floor(Math.random() * 7)];
   return `${name} ${suffix}`;
-};
-
-// D&D 3.5 Skill Point Calculation
-const getClassSkillPointsBase = (cls: string): number => {
-    if (['Barbarian', 'Druid', 'Monk'].includes(cls)) return 4;
-    if (['Bard', 'Ranger'].includes(cls)) return 6;
-    if (['Rogue'].includes(cls)) return 8;
-    return 2; // Cleric, Fighter, Paladin, Sorcerer, Wizard
 };
 
 const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg: string, eq: string[], set: string, eco: EconomyDifficulty) => void }) => {
@@ -258,7 +253,7 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
     const getSkillPointsData = () => {
         // Intelligence modifier affects skill points
         const intMod = Math.floor((finalStats.intelligence - 10) / 2);
-        const base = getClassSkillPointsBase(cls);
+        const base = CLASS_SKILL_POINTS[cls] || 2;
         
         // Formula: (Base + Int Mod) * 4 at level 1.
         // Minimum 1 point per level before multiplier.
@@ -564,7 +559,7 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
                             const isMaxed = rank >= 4;
                             // Visual distinction for ranks
                             return (
-                                <div key={s} className={`flex justify-between items-center p-3 rounded border transition-colors ${rank > 0 ? 'bg-rpg-900 border-rpg-accent shadow-inner' : 'bg-rpg-900/40 border-rpg-700/50'}`}>
+                                <div key={s} className={`flex justify-between items-center p-3 rounded border transition-colors ${rank > 0 ? 'bg-rpg-800 border-rpg-accent shadow-inner' : 'bg-rpg-900/40 border-rpg-700/50'}`}>
                                     <div>
                                         <div className={`font-bold text-sm ${rank > 0 ? 'text-rpg-text' : 'text-rpg-muted'}`}>{s}</div>
                                         <div className="text-[10px] text-rpg-muted uppercase">{SKILL_ABILITY_MAP[s]}</div>
@@ -654,6 +649,7 @@ const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [showLevelUpModal, setShowLevelUpModal] = useState(false);
+  const [isRollingDice, setIsRollingDice] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [apiHistory, setApiHistory] = useState<{ role: 'user' | 'model', parts: [{ text: string }] }[]>([]);
@@ -670,7 +666,7 @@ const App: React.FC = () => {
     if (activeTab === 'play' && chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [messages, status, activeTab]);
+  }, [messages, status, activeTab, isRollingDice]);
 
   useEffect(() => {
     if (gameState && status === GameStatus.PLAYING) {
@@ -693,14 +689,34 @@ const App: React.FC = () => {
     } catch (e) { console.error(e); setStatus(GameStatus.ERROR); }
   };
 
-  const handleLevelUpConfirm = async (newMaxHp: number, newSkills: Record<string, number>) => {
+  const handleLevelUpConfirm = async (newMaxHp: number, newSkills: Record<string, number>, newStats?: StatBlock) => {
     if (!gameState) return;
     const newLevel = gameState.character.level + 1;
-    const updatedCharacter = { ...gameState.character, level: newLevel, maxHp: newMaxHp, skills: newSkills };
+    
+    // Calculate hp difference to heal the amount gained
+    const hpGain = newMaxHp - gameState.character.maxHp;
+    const currentHp = gameState.character.hp + hpGain;
+
+    const updatedCharacter = { 
+        ...gameState.character, 
+        level: newLevel, 
+        maxHp: newMaxHp, 
+        hp: currentHp,
+        skills: newSkills,
+        stats: newStats || gameState.character.stats
+    };
+
     setGameState({ ...gameState, character: updatedCharacter });
     setShowLevelUpModal(false);
-    const systemUpdateMsg = `[SYSTEM UPDATE] Player manually leveled up to Level ${newLevel}. New MaxHP: ${newMaxHp}. Skills updated.`;
-    setMessages(prev => [...prev, { id: 'lvl-sys', sender: 'system', text: `Level Up! Level ${newLevel}.`, timestamp: Date.now() }]);
+    
+    // Create detailed message for AI synchronization (v1.5.1 requirement: update dependent stats)
+    const statsDetail = newStats ? `Stats updated: STR ${newStats.strength}, DEX ${newStats.dexterity}, CON ${newStats.constitution}, INT ${newStats.intelligence}, WIS ${newStats.wisdom}, CHA ${newStats.charisma}.` : "Stats unchanged.";
+    const skillDetail = `Skill ranks updated.`;
+
+    const systemUpdateMsg = `[SYSTEM UPDATE] Player manually leveled up to Level ${newLevel}. New MaxHP: ${newMaxHp}. ${statsDetail} ${skillDetail} Please update derived stats (AC, Saving Throws, Attack Bonuses) in your internal state.`;
+    
+    setMessages(prev => [...prev, { id: 'lvl-sys', sender: 'system', text: `Level Up! Reached Level ${newLevel}.`, timestamp: Date.now() }]);
+    
     try {
         const response = await processTurn(apiHistory, systemUpdateMsg);
         setGameState(response.gameState);
@@ -724,6 +740,47 @@ const App: React.FC = () => {
       setApiHistory(prev => [...prev, { role: 'user', parts: [{ text: userAction }] }, { role: 'model', parts: [{ text: JSON.stringify(response) }] }]);
       setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: Date.now()+'-dm', sender: 'dm', text: response.narrative, timestamp: Date.now() }]);
     } catch (error) { setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: 'err', sender: 'system', text: "Connection failed.", timestamp: Date.now(), type: 'error' }]); }
+  };
+
+  const handleActiveRoll = async () => {
+    if (!gameState?.activeRoll) return;
+    setIsRollingDice(true);
+
+    const { dice, description } = gameState.activeRoll;
+    
+    // Simulate Roll Animation
+    await new Promise(r => setTimeout(r, 600));
+
+    // Calculate Roll in JS
+    const { total, breakdown, rawDie } = rollDiceExpression(dice);
+    
+    setIsRollingDice(false);
+
+    // Construct System Message
+    const systemMsg = `[SYSTEM] Player rolled for ${description}. Result: ${total} (Formula: ${dice}, Breakdown: ${breakdown})`;
+    
+    // Add visual feedback to chat
+    const rollMsg: Message = { 
+        id: Date.now().toString(), 
+        sender: 'system', 
+        text: `🎲 ${description}: ${total} (${breakdown})`, 
+        timestamp: Date.now(),
+        type: 'roll'
+    };
+    setMessages(prev => [...prev, rollMsg]);
+    
+    // Send to AI
+    const tempId = 'load-'+Date.now();
+    setMessages(prev => [...prev, { id: tempId, sender: 'system', text: 'Resolving outcome...', timestamp: Date.now() }]);
+
+    try {
+        const response = await processTurn(apiHistory, systemMsg);
+        setGameState(response.gameState);
+        setApiHistory(prev => [...prev, { role: 'user', parts: [{ text: systemMsg }] }, { role: 'model', parts: [{ text: JSON.stringify(response) }] }]);
+        setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: Date.now()+'-dm', sender: 'dm', text: response.narrative, timestamp: Date.now() }]);
+    } catch (error) {
+         setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: 'err', sender: 'system', text: "Connection failed.", timestamp: Date.now(), type: 'error' }]);
+    }
   };
 
   if (status === GameStatus.SETUP) {
@@ -808,19 +865,42 @@ const App: React.FC = () => {
                     <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full custom-scrollbar">
                         {messages.map((msg) => (
                             <div key={msg.id} className={`flex flex-col ${msg.sender === 'player' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2 duration-300`}>
-                                <div className={`max-w-[90%] md:max-w-[80%] rounded-lg p-4 leading-relaxed whitespace-pre-wrap ${msg.sender === 'player' ? 'bg-rpg-700 text-rpg-text border border-rpg-600 rounded-br-none' : msg.sender === 'system' ? 'bg-transparent text-rpg-muted text-sm italic border border-transparent' : 'bg-rpg-800 text-rpg-text border border-rpg-700 shadow-lg rounded-bl-none font-serif'} ${msg.type === 'error' ? 'text-rpg-danger border-rpg-danger/50 bg-rpg-danger/10' : ''}`}>
+                                <div className={`max-w-[90%] md:max-w-[80%] rounded-lg p-4 leading-relaxed whitespace-pre-wrap ${msg.sender === 'player' ? 'bg-rpg-700 text-rpg-text border border-rpg-600 rounded-br-none' : msg.sender === 'system' ? 'bg-transparent text-rpg-muted text-sm italic border border-transparent' : 'bg-rpg-800 text-rpg-text border border-rpg-700 shadow-lg rounded-bl-none font-serif'} ${msg.type === 'error' ? 'text-rpg-danger border-rpg-danger/50 bg-rpg-danger/10' : ''} ${msg.type === 'roll' ? 'border-rpg-accent/50 bg-rpg-accent/10 font-bold text-rpg-accent flex items-center' : ''}`}>
                                     {msg.sender === 'dm' && <span className="block text-xs font-bold text-rpg-accent mb-1 uppercase tracking-wider">Dungeon Master</span>}
+                                    {msg.type === 'roll' && <Dice5 className="w-4 h-4 mr-2 inline-block"/>}
                                     {msg.text}
                                 </div>
                             </div>
                         ))}
                         <div className="h-4"></div>
                     </div>
+                    
+                    {/* INPUT AREA / ROLL UI */}
                     <div className="p-4 bg-rpg-900 border-t border-rpg-700 shrink-0">
-                       <form onSubmit={handleSendAction} className="max-w-4xl mx-auto relative flex items-center">
-                          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="What do you do?" disabled={messages.length > 0 && messages[messages.length - 1].sender === 'player'} className="w-full bg-rpg-800 text-rpg-text border-2 border-rpg-700 rounded-lg py-4 pl-4 pr-12 focus:outline-none focus:border-rpg-accent focus:ring-1 focus:ring-rpg-accent transition-all placeholder:text-rpg-muted disabled:opacity-50 disabled:cursor-not-allowed" autoFocus />
-                          <button type="submit" disabled={!input.trim()} className="absolute right-3 p-2 text-rpg-accent hover:text-rpg-text disabled:opacity-50 disabled:cursor-not-allowed transition-colors"><Send size={20} /></button>
-                       </form>
+                       {gameState.activeRoll ? (
+                           <div className="max-w-4xl mx-auto flex flex-col items-center justify-center p-2 animate-in zoom-in-95">
+                               <div className="text-center mb-4">
+                                   <div className="text-xs font-bold text-rpg-muted uppercase tracking-widest mb-1">Roll Required</div>
+                                   <div className="text-xl font-serif font-bold text-rpg-text flex items-center justify-center">
+                                       <span className="text-rpg-accent mr-2">{gameState.activeRoll.description}</span>
+                                       <span className="text-rpg-muted text-sm bg-rpg-800 px-2 py-0.5 rounded border border-rpg-700">{gameState.activeRoll.dice}</span>
+                                   </div>
+                               </div>
+                               <button 
+                                   onClick={handleActiveRoll}
+                                   disabled={isRollingDice}
+                                   className="bg-rpg-accent hover:bg-rpg-accent-glow text-rpg-900 font-bold py-3 px-12 rounded-full shadow-xl flex items-center text-lg transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                               >
+                                   <Dices className={`mr-2 w-6 h-6 ${isRollingDice ? 'animate-spin' : ''}`} />
+                                   {isRollingDice ? 'Rolling...' : 'Roll Dice'}
+                               </button>
+                           </div>
+                       ) : (
+                           <form onSubmit={handleSendAction} className="max-w-4xl mx-auto relative flex items-center">
+                              <input type="text" value={input} onChange={(e) => setInput(e.target.value)} placeholder="What do you do?" disabled={messages.length > 0 && messages[messages.length - 1].sender === 'player'} className="w-full bg-rpg-800 text-rpg-text border-2 border-rpg-700 rounded-lg py-4 pl-4 pr-12 focus:outline-none focus:border-rpg-accent focus:ring-1 focus:ring-rpg-accent transition-all placeholder:text-rpg-muted disabled:opacity-50 disabled:cursor-not-allowed" autoFocus />
+                              <button type="submit" disabled={!input.trim()} className="absolute right-3 p-2 text-rpg-accent hover:text-rpg-text disabled:opacity-50 disabled:cursor-not-allowed transition-colors"><Send size={20} /></button>
+                           </form>
+                       )}
                     </div>
                 </div>
              )}

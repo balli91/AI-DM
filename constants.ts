@@ -1,5 +1,6 @@
 
 
+
 export type StatBlock = { strength: number; dexterity: number; constitution: number; intelligence: number; wisdom: number; charisma: number; };
 
 export const BASE_STATS: StatBlock = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
@@ -44,6 +45,20 @@ export const CLASS_HIT_DICE: Record<string, number> = {
   'Bard': 6,
   'Sorcerer': 4,
   'Wizard': 4
+};
+
+export const CLASS_SKILL_POINTS: Record<string, number> = {
+  'Barbarian': 4,
+  'Bard': 6,
+  'Cleric': 2,
+  'Druid': 4,
+  'Fighter': 2,
+  'Monk': 4,
+  'Paladin': 2,
+  'Ranger': 6,
+  'Rogue': 8,
+  'Sorcerer': 2,
+  'Wizard': 2
 };
 
 export const RANDOM_NAMES: Record<string, string[]> = {
@@ -94,6 +109,45 @@ export const SKILL_ABILITY_MAP: Record<string, keyof StatBlock> = {
   'Tumble': 'dexterity',
   'Use Magic Device': 'charisma',
   'Use Rope': 'dexterity',
+};
+
+export const SKILL_DESCRIPTIONS: Record<string, string> = {
+  'Appraise': 'Determine the monetary value of items.',
+  'Balance': 'Maintain equilibrium on slippery or narrow surfaces.',
+  'Bluff': 'Deceive others or create a distraction.',
+  'Climb': 'Scale vertical surfaces.',
+  'Concentration': 'Maintain focus despite distractions or damage.',
+  'Craft': 'Create items (requires tools).',
+  'Decipher Script': 'Understand ancient or secret writings.',
+  'Diplomacy': 'Persuade others or negotiate deals.',
+  'Disable Device': 'Disarm traps or jam mechanisms.',
+  'Disguise': 'Change appearance to impersonate others.',
+  'Escape Artist': 'Slip bindings or squeeze through tight spaces.',
+  'Forgery': 'Create false documents.',
+  'Gather Information': 'Acquire rumors and news from locals.',
+  'Handle Animal': 'Train or control animals.',
+  'Heal': 'Provide first aid or long-term care.',
+  'Hide': 'Remain unseen while stationary or moving.',
+  'Intimidate': 'Coerce others through fear.',
+  'Jump': 'Leap horizontally or vertically.',
+  'Knowledge': 'Recall lore (Arcana, History, Nature, etc.).',
+  'Listen': 'Detect noise or hidden enemies.',
+  'Move Silently': 'Move without making sound.',
+  'Open Lock': 'Pick locks (requires tools).',
+  'Perform': 'Entertain audiences with art.',
+  'Profession': 'Practice a trade or livelihood.',
+  'Ride': 'Control a mount in stressful situations.',
+  'Search': 'Find secret doors or hidden objects close up.',
+  'Sense Motive': 'Detect lies or gut feelings.',
+  'Sleight of Hand': 'Conceal objects or pick pockets.',
+  'Speak Language': 'Learn and speak new languages.',
+  'Spellcraft': 'Identify spells and magical effects.',
+  'Spot': 'Visually detect hidden things at a distance.',
+  'Survival': 'Track, forage, and survive in the wild.',
+  'Swim': 'Move through water.',
+  'Tumble': 'Acrobatic maneuvers to avoid attacks.',
+  'Use Magic Device': 'Activate magic items blindly.',
+  'Use Rope': 'Tie knots and bind prisoners.',
 };
 
 export const BEGINNER_ARRAY = [18, 16, 14, 12, 10, 10];

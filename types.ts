@@ -1,4 +1,5 @@
 
+
 export interface CharacterStats {
   name: string;
   class: string;
@@ -18,6 +19,7 @@ export interface CharacterStats {
     charisma: number;
   };
   skills: Record<string, number>;
+  passives?: string[]; // Acquired passive traits (e.g. Darkvision, Tremorsense)
 }
 
 export type EconomyDifficulty = 'Low' | 'Normal' | 'High';
@@ -52,11 +54,18 @@ export interface CombatState {
   turnOrder: string[]; // list of names (player + enemies) in initiative order
 }
 
+export interface ActiveRoll {
+  rollType: 'attack' | 'damage' | 'save' | 'skill' | 'initiative' | 'generic';
+  description: string; // "Attack Roll vs Goblin", "Fireball Damage"
+  dice: string; // "1d20+5", "8d6"
+}
+
 export interface GameState {
   character: CharacterStats;
   world: WorldState;
   combat: CombatState | null;
   lastDiceRoll: DiceRoll | null;
+  activeRoll: ActiveRoll | null; // Null when no active roll required
   isGameOver: boolean;
 }
 
@@ -65,7 +74,7 @@ export interface Message {
   sender: 'player' | 'dm' | 'system';
   text: string;
   timestamp: number;
-  type?: 'narrative' | 'info' | 'error';
+  type?: 'narrative' | 'info' | 'error' | 'roll';
 }
 
 export interface TurnResponse {

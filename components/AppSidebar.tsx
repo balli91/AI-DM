@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Scroll, Shield, Sword, Box, PlusCircle, Book, Handshake, Coins, Home, X, Sun, Moon } from 'lucide-react';
 
@@ -136,7 +137,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ currentView, onViewChang
       <div className="p-4 border-t border-rpg-700 bg-rpg-800/30 flex items-center justify-between">
         <div className="flex items-center text-xs text-rpg-muted">
             <Book className="w-4 h-4 mr-2" />
-            <span>v1.2.0 Beta</span>
+            <span>v1.4.0 Core</span>
         </div>
         
         {toggleTheme && (

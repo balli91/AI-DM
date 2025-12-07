@@ -1,12 +1,12 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { GameState } from '../types';
 import { 
   Shield, Zap, Heart, Brain, Sparkles, User, Sword, Activity, 
-  AlertTriangle, Skull, Wind
+  AlertTriangle, Skull, Wind, Eye, ArrowUpDown, ChevronDown, ChevronUp, Info
 } from 'lucide-react';
-import { SKILL_ABILITY_MAP } from '../constants';
-import { parseInventory, calculateACBreakdown, getAbilityMod, calculateEncumbrance, getBaseSaves } from '../utils/rules';
+import { SKILL_ABILITY_MAP, SKILL_DESCRIPTIONS } from '../constants';
+import { parseInventory, calculateACBreakdown, getAbilityMod, calculateEncumbrance, calculateSaveBreakdown, calculateBAB, getIterativeAttacks } from '../utils/rules';
 
 interface CharacterSheetProps {
   gameState: GameState;
@@ -30,14 +30,14 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
   const { character } = gameState;
   const parsedInventory = useMemo(() => parseInventory(character.inventory), [character.inventory]);
   const acData = useMemo(() => calculateACBreakdown(character, parsedInventory), [character, parsedInventory]);
-  const baseSaves = useMemo(() => getBaseSaves(character.class, character.level), [character.class, character.level]);
+  const saves = useMemo(() => calculateSaveBreakdown(character, parsedInventory), [character, parsedInventory]);
   
   // Weights
   const totalWeight = parsedInventory.reduce((acc, i) => acc + i.totalWeight, 0);
   const encumbrance = calculateEncumbrance(character.stats.strength, totalWeight);
 
   // Derived Combat Stats
-  const bab = Math.floor(character.level * (['Fighter', 'Barbarian', 'Paladin', 'Ranger'].includes(character.class) ? 1 : 0.75)); // Approx BAB
+  const bab = calculateBAB(character.class, character.level);
   const strMod = getAbilityMod(character.stats.strength);
   const dexMod = getAbilityMod(character.stats.dexterity);
   const conMod = getAbilityMod(character.stats.constitution);
@@ -46,6 +46,33 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
   const chaMod = getAbilityMod(character.stats.charisma);
 
   const initiative = dexMod; // + Misc if any
+
+  // Skills Sorting & Details State
+  const [skillSort, setSkillSort] = useState<'name' | 'bonus'>('name');
+  const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
+
+  const sortedSkills = useMemo(() => {
+    return Object.keys(SKILL_ABILITY_MAP).sort((a, b) => {
+        if (skillSort === 'name') return a.localeCompare(b);
+        
+        // Bonus Sort
+        const getMod = (skill: string) => {
+             const ability = SKILL_ABILITY_MAP[skill];
+             if(ability === 'strength') return strMod;
+             if(ability === 'dexterity') return dexMod;
+             if(ability === 'constitution') return conMod;
+             if(ability === 'intelligence') return intMod;
+             if(ability === 'wisdom') return wisMod;
+             if(ability === 'charisma') return chaMod;
+             return 0;
+        };
+        const rankA = character.skills?.[a] || 0;
+        const rankB = character.skills?.[b] || 0;
+        const totalA = rankA + getMod(a);
+        const totalB = rankB + getMod(b);
+        return totalB - totalA; // Descending
+    });
+  }, [skillSort, character.skills, strMod, dexMod, conMod, intMod, wisMod, chaMod]);
 
   return (
     <div className="h-full overflow-y-auto p-4 md:p-8 bg-rpg-950 custom-scrollbar animate-in fade-in duration-300">
@@ -121,23 +148,38 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
 
              {/* Saving Throws */}
              <div className="panel-base p-4">
-                <h3 className="text-sm font-bold text-rpg-accent uppercase mb-3 flex items-center">
-                    <Shield className="w-4 h-4 mr-2" /> Saving Throws
-                </h3>
+                <div className="flex justify-between items-center mb-3">
+                   <h3 className="text-sm font-bold text-rpg-accent uppercase flex items-center">
+                       <Shield className="w-4 h-4 mr-2" /> Saving Throws
+                   </h3>
+                   {saves.notes.length > 0 && (
+                     <div className="group relative">
+                       <Info className="w-4 h-4 text-rpg-accent cursor-help" />
+                       <div className="absolute bottom-full right-0 mb-2 w-48 bg-rpg-800 border border-rpg-700 p-2 rounded shadow-xl hidden group-hover:block z-50 text-xs">
+                          <div className="font-bold mb-1 text-rpg-text">Modifiers</div>
+                          {saves.notes.map((note, i) => <div key={i} className="text-rpg-muted">{note}</div>)}
+                       </div>
+                     </div>
+                   )}
+                </div>
+                
                 <div className="space-y-2">
                     {[
-                        { label: 'Fortitude', base: baseSaves.fort, mod: conMod, icon: <Heart size={14} className="text-rpg-danger"/> },
-                        { label: 'Reflex', base: baseSaves.ref, mod: dexMod, icon: <Zap size={14} className="text-rpg-warning"/> },
-                        { label: 'Will', base: baseSaves.will, mod: wisMod, icon: <Brain size={14} className="text-blue-400"/> }
+                        { label: 'Fortitude', data: saves.fort, icon: <Heart size={14} className="text-rpg-danger"/> },
+                        { label: 'Reflex', data: saves.ref, icon: <Zap size={14} className="text-rpg-warning"/> },
+                        { label: 'Will', data: saves.will, icon: <Brain size={14} className="text-blue-400"/> }
                     ].map(save => (
-                        <div key={save.label} className="flex justify-between items-center bg-rpg-800 p-2 rounded border border-rpg-700">
+                        <div key={save.label} className="flex justify-between items-center bg-rpg-800 p-2 rounded border border-rpg-700 group hover:border-rpg-600">
                             <div className="flex items-center text-sm font-bold text-rpg-muted">
                                 {save.icon} <span className="ml-2">{save.label}</span>
                             </div>
                             <div className="flex items-center space-x-3">
-                                <span className="text-xs text-rpg-muted">Base +{save.base} / Mod {save.mod >= 0 ? '+' : ''}{save.mod}</span>
+                                <span className="text-xs text-rpg-muted group-hover:text-rpg-text transition-colors">
+                                  Base +{save.data.base} / Abil {save.data.ability >= 0 ? '+' : ''}{save.data.ability} 
+                                  {save.data.misc !== 0 && <span className="text-rpg-accent"> / Misc {save.data.misc >= 0 ? '+' : ''}{save.data.misc}</span>}
+                                </span>
                                 <span className="text-lg font-bold text-rpg-text bg-rpg-900 px-2 rounded min-w-[3rem] text-center border border-rpg-700">
-                                    {save.base + save.mod >= 0 ? '+' : ''}{save.base + save.mod}
+                                    {save.data.total >= 0 ? '+' : ''}{save.data.total}
                                 </span>
                             </div>
                         </div>
@@ -145,13 +187,20 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                 </div>
              </div>
 
-             {/* Passive Perception & Senses */}
-             <div className="panel-base p-4 flex items-center justify-between">
-                <div>
-                    <h3 className="text-xs font-bold text-rpg-muted uppercase">Passive Perception</h3>
-                    <div className="text-xs text-rpg-muted">10 + Wis Mod</div>
-                </div>
-                <div className="text-2xl font-serif font-bold text-rpg-text">{10 + wisMod}</div>
+             {/* Passive Skills / Senses */}
+             <div className="panel-base p-4 min-h-[5rem] flex flex-col justify-center">
+                <h3 className="text-xs font-bold text-rpg-muted uppercase mb-1">Passive Senses</h3>
+                {character.passives && character.passives.length > 0 ? (
+                    <div className="space-y-1 mt-2">
+                        {character.passives.map((p, i) => (
+                             <div key={i} className="text-sm font-bold text-rpg-text flex items-center">
+                                <Eye className="w-3 h-3 mr-2 text-rpg-accent" /> {p}
+                             </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-xs text-rpg-muted italic opacity-50 text-center py-2 border border-dashed border-rpg-800 rounded">None active</div>
+                )}
              </div>
           </div>
 
@@ -166,7 +215,9 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                 <div className="space-y-3">
                     <div className="flex justify-between items-center bg-rpg-800/50 p-2 rounded">
                         <span className="text-sm text-rpg-muted">Base Attack Bonus</span>
-                        <span className="font-bold text-rpg-accent">+{bab}</span>
+                        <span className="font-bold text-rpg-accent">
+                          {getIterativeAttacks(bab).map((val, i) => `${i>0 ? ' / ' : ''}+${val}`)}
+                        </span>
                     </div>
 
                     {/* Weapons List */}
@@ -175,7 +226,12 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                          const isFinesse = weapon.properties?.includes('Finesse');
                          const attackStat = isMelee ? (isFinesse && dexMod > strMod ? dexMod : strMod) : dexMod;
                          const damageStat = isMelee ? strMod : 0; // Simplified
-                         const totalAttack = bab + attackStat + (weapon.qty > 1 ? 0 : 0); // Placeholder for magic bonus
+                         
+                         const iterativeAttacks = getIterativeAttacks(bab);
+                         const attackStrings = iterativeAttacks.map(b => {
+                            const total = b + attackStat + (weapon.qty > 1 ? 0 : 0); // Placeholder for magic weapon check if we add it later
+                            return `${total >= 0 ? '+' : ''}${total}`;
+                         });
 
                          return (
                             <div key={idx} className="bg-rpg-800 border border-rpg-700 p-3 rounded hover:border-rpg-danger transition-colors cursor-pointer group">
@@ -185,8 +241,8 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                                 </div>
                                 <div className="flex justify-between items-center mt-2">
                                     <div className="flex items-center space-x-2">
-                                        <div className="bg-rpg-900 border border-rpg-600 px-2 py-1 rounded text-sm font-bold text-rpg-accent" title="Attack Bonus">
-                                            {totalAttack >= 0 ? '+' : ''}{totalAttack}
+                                        <div className="bg-rpg-900 border border-rpg-600 px-2 py-1 rounded text-sm font-bold text-rpg-accent" title="Attack Bonus (Iterative)">
+                                            {attackStrings.join(' / ')}
                                         </div>
                                         <div className="text-xs text-rpg-muted">to hit</div>
                                     </div>
@@ -266,11 +322,19 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
              <div className="panel-base p-4 h-full max-h-[600px] flex flex-col">
                 <h3 className="text-sm font-bold text-rpg-text uppercase mb-3 flex items-center justify-between">
                     <span>Skills</span>
-                    <span className="text-[10px] text-rpg-muted bg-rpg-800 px-1 rounded">Rank + Mod</span>
+                    <button 
+                        onClick={() => setSkillSort(skillSort === 'name' ? 'bonus' : 'name')}
+                        className="flex items-center space-x-1 text-[10px] bg-rpg-800 hover:bg-rpg-700 px-2 py-1 rounded border border-rpg-700 transition-colors"
+                        title={skillSort === 'name' ? "Sort by Bonus" : "Sort by Name"}
+                    >
+                        <span>{skillSort === 'name' ? 'Name' : 'Bonus'}</span>
+                        <ArrowUpDown size={10} />
+                    </button>
                 </h3>
+                
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
                     <div className="space-y-1">
-                        {Object.keys(SKILL_ABILITY_MAP).sort().map(skill => {
+                        {sortedSkills.map(skill => {
                              const ability = SKILL_ABILITY_MAP[skill];
                              // Use standard ability mods
                              let mod = 0;
@@ -284,10 +348,35 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                              const rank = character.skills?.[skill] || 0;
                              const total = rank + mod;
                              
+                             const isExpanded = expandedSkill === skill;
+
                              return (
-                                <div key={skill} className={`flex justify-between items-center px-2 py-1.5 rounded text-xs ${rank > 0 ? 'bg-rpg-800/50 text-rpg-text font-medium' : 'text-rpg-muted hover:bg-rpg-800/20'}`}>
-                                    <span>{skill} <span className="text-[9px] opacity-50 uppercase ml-1">({ability.substring(0,3)})</span></span>
-                                    <span className={`${total > 0 ? 'text-rpg-accent' : ''}`}>{total >= 0 ? '+' : ''}{total}</span>
+                                <div 
+                                    key={skill} 
+                                    onClick={() => setExpandedSkill(isExpanded ? null : skill)}
+                                    className={`
+                                        group flex flex-col px-2 py-2 rounded text-xs cursor-pointer border
+                                        ${isExpanded ? 'bg-rpg-800 border-rpg-accent' : rank > 0 ? 'bg-rpg-800/50 text-rpg-text font-medium border-transparent hover:border-rpg-700' : 'text-rpg-muted hover:bg-rpg-800/20 border-transparent'}
+                                    `}
+                                >
+                                    <div className="flex justify-between items-center">
+                                        <div className="flex items-center">
+                                            {isExpanded ? <ChevronUp size={12} className="mr-1 text-rpg-accent"/> : <ChevronDown size={12} className="mr-1 opacity-0 group-hover:opacity-50"/>}
+                                            <span>{skill} <span className="text-[9px] opacity-50 uppercase ml-1">({ability.substring(0,3)})</span></span>
+                                        </div>
+                                        <span className={`${total > 0 ? 'text-rpg-accent font-bold' : ''}`}>{total >= 0 ? '+' : ''}{total}</span>
+                                    </div>
+
+                                    {/* Detailed view */}
+                                    {isExpanded && (
+                                        <div className="mt-2 pt-2 border-t border-rpg-700/50 text-rpg-text animate-in slide-in-from-top-1">
+                                            <p className="text-[11px] italic mb-2 text-rpg-muted">{SKILL_DESCRIPTIONS[skill] || "No description available."}</p>
+                                            <div className="flex justify-between text-[10px] text-rpg-muted uppercase tracking-wider">
+                                                <span>Rank: {rank}</span>
+                                                <span>Mod: {mod >= 0 ? '+' : ''}{mod}</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                              )
                         })}
