@@ -1,3 +1,4 @@
+
 import { ALL_ITEMS } from '../data/srdData';
 import { CharacterStats } from '../types';
 import { FEATS_DB, FeatDefinition } from '../constants';
@@ -56,6 +57,12 @@ export const getAbilityMod = (score: number): number => {
 
 // Helper to check if a character has a feat (handling "Feat (Target)" format)
 export const hasFeat = (character: CharacterStats, featName: string): boolean => {
+    // If checking for a specific named feat (e.g., "Weapon Focus (Longsword)")
+    if (featName.includes('(') && featName.includes(')')) {
+        return character.feats.some(f => f === featName);
+    }
+    // If checking for the base feat (e.g., "Weapon Focus")
+    // Check if the character has the base feat, or any targeted version of it
     return character.feats.some(f => f === featName || f.startsWith(`${featName} (`));
 };
 
@@ -87,6 +94,22 @@ export const rollDiceExpression = (expression: string): { total: number, breakdo
     const breakdown = `[${rolls.join(',')}] ${mod !== 0 ? `${operator} ${mod}` : ''}`;
 
     return { total: finalTotal, breakdown, rawDie };
+};
+
+// Determine min and max possible roll for animation purposes
+export const getDieMinMax = (diceExpression: string): { min: number, max: number } => {
+  const match = diceExpression.match(/(\d+)d(\d+)(?:([+-])(\d+))?/);
+  if (!match) return { min: 1, max: 20 }; // Default for invalid
+
+  const count = parseInt(match[1]);
+  const die = parseInt(match[2]);
+  const operator = match[3] || '+';
+  const mod = match[4] ? parseInt(match[4]) : 0;
+
+  const minRoll = (count * 1) + (operator === '-' ? -mod : mod);
+  const maxRoll = (count * die) + (operator === '-' ? -mod : mod);
+
+  return { min: minRoll, max: maxRoll };
 };
 
 // --- BAB & Attack Logic (v1.5.0) ---
@@ -137,21 +160,22 @@ export const calculateInitiative = (character: CharacterStats): { total: number,
 };
 
 // --- Feat Prerequisites Check (v1.6) ---
-export const checkFeatPrerequisites = (character: CharacterStats, featName: string): boolean => {
+// Added targetLevel parameter for accurate checks during multi-level-ups
+export const checkFeatPrerequisites = (character: CharacterStats, featName: string, targetLevel: number = character.level): boolean => {
     const feat = FEATS_DB.find(f => f.name === featName);
     if (!feat) return false;
     
-    // Check if player already has this exact feat (ignoring target for now, usually you can't take same feat twice unless specified)
+    // Check if player already has this exact feat (e.g., "Weapon Focus (Longsword)")
     // For feats like Weapon Focus, you CAN take it multiple times for different weapons.
-    // Simplification: In this UI, if they have "Weapon Focus (Sword)", we might show "Weapon Focus" again to allow "Weapon Focus (Axe)".
-    // But standard DB check usually blocks "unique" feats.
-    // For now, if it allows targets, we allow re-selection. If not, we block.
+    // If it's a non-targeted feat and already has the base name, block.
     if (!feat.targetType && hasFeat(character, featName)) return false; 
     
     const p = feat.prerequisites;
     if (!p) return true;
 
-    if (p.bab && calculateBAB(character.class, character.level) < p.bab) return false;
+    // Use stats and level from the character's *current* state, but BAB and Level requirements use targetLevel
+    // This assumes ability scores from previous levels (or current level's attribute increase) are already applied to `character.stats`
+    if (p.bab && calculateBAB(character.class, targetLevel) < p.bab) return false;
     if (p.str && character.stats.strength < p.str) return false;
     if (p.dex && character.stats.dexterity < p.dex) return false;
     if (p.con && character.stats.constitution < p.con) return false;
@@ -160,7 +184,7 @@ export const checkFeatPrerequisites = (character: CharacterStats, featName: stri
     if (p.cha && character.stats.charisma < p.cha) return false;
     
     if (p.class && character.class !== p.class) return false;
-    if (p.level && character.level < p.level) return false;
+    if (p.level && targetLevel < p.level) return false; // Use targetLevel for level requirement
 
     // Updated: Check for multiple required feats
     if (p.requiredFeats) {
@@ -207,6 +231,14 @@ export const parseInventory = (inventoryList: string[]): ParsedItem[] => {
     }
 
     if (dbItem) {
+        let finalProperties = (dbItem as any).properties || [];
+        
+        // ISSUE A FIX: Sanity check for Longsword
+        // Force removal of Two-Handed property if mistakenly applied to Longsword
+        if (dbItem.name === "Longsword") {
+             finalProperties = finalProperties.filter((p: string) => p !== 'Two-Handed');
+        }
+
         return {
             originalString: itemStr,
             name: dbItem.name,
@@ -222,7 +254,7 @@ export const parseInventory = (inventoryList: string[]): ParsedItem[] => {
             armor_bonus: (dbItem as any).armor_bonus,
             max_dex: (dbItem as any).max_dex,
             check_penalty: (dbItem as any).check_penalty,
-            properties: (dbItem as any).properties,
+            properties: finalProperties,
             isCurrency: false
         } as ParsedItem;
     }
@@ -287,14 +319,27 @@ export const calculateACBreakdown = (character: CharacterStats, inventory: Parse
   let shieldBonus = equippedShield?.armor_bonus || 0;
   
   const allowableDex = Math.min(dexMod, maxDex);
-  if (dexMod > maxDex) notes.push(`Dex bonus capped by ${equippedArmor?.name} (Max ${maxDex})`);
+  if (dexMod > maxDex) notes.push(`Dex bonus capped by ${equippedArmor?.name || 'armor'} (Max ${maxDex})`);
 
-  // 2H Weapon Conflict
+  // 2H Weapon Conflict Logic (Fixed for Issue B)
   const hasTwoHanded = weapons.some(w => w.properties?.includes('Two-Handed'));
-  if (hasTwoHanded && shieldBonus > 0) {
-    notes.push("Shield bonus disabled due to Two-Handed Weapon.");
-    shieldBonus = 0; 
+  
+  if (hasTwoHanded) {
+    if (shieldBonus > 0) {
+        notes.push("Shield bonus disabled due to Two-Handed Weapon.");
+        shieldBonus = 0; 
+    } else if (equippedShield && !equippedShield.armor_bonus) {
+        // Just in case it has 0 bonus naturally
+    }
+  } else if (equippedShield && equippedShield.armor_bonus && shieldBonus === 0) {
+      // This case should theoretically be covered by the 2H check, 
+      // but if bonus is 0 for another reason
+  } else if (equippedShield && equippedShield.armor_bonus && shieldBonus > 0 && hasTwoHanded) {
+     // Safety fallback
+      shieldBonus = 0;
+      notes.push("Shield bonus disabled (Two-Handed Weapon)");
   }
+
 
   // Feat: Dodge (+1 AC)
   if (hasFeat(character, "Dodge")) {
@@ -302,9 +347,10 @@ export const calculateACBreakdown = (character: CharacterStats, inventory: Parse
       notes.push("Dodge (+1)");
   }
   
-  // Feat: Two-Weapon Defense (Not in v1.6 list but checking logic structure)
-  
   const total = base + allowableDex + armorBonus + shieldBonus + sizeMod + featMod;
+
+  // Debug Print (Requested in Issue B)
+  notes.push(`AC Breakdown: Base ${base} + Armor ${armorBonus} + Shield ${shieldBonus} + Dex ${allowableDex} + Size ${sizeMod} + Feat ${featMod} = TOTAL ${total}`);
 
   return {
     base,
@@ -382,9 +428,10 @@ export const calculateSaveBreakdown = (character: CharacterStats, inventory: Par
   }
 
   // Paladin Divine Grace
+  // Only apply once, even if multi-level-up. Check if it's already in notes.
   if (character.class === 'Paladin' && character.level >= 2) {
       const chaMod = getAbilityMod(character.stats.charisma);
-      if (chaMod > 0) {
+      if (chaMod > 0 && !notes.some(n => n.includes("Divine Grace"))) {
           miscFort += chaMod;
           miscRef += chaMod;
           miscWill += chaMod;

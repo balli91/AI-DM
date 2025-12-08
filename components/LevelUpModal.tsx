@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { CharacterStats } from '../types';
 import { StatBlock, CLASS_HIT_DICE, SKILL_ABILITY_MAP, CLASS_SKILL_POINTS, FEATS_DB } from '../constants';
 import { getAbilityMod, calculateBAB, getBaseSaves, checkFeatPrerequisites, parseInventory } from '../utils/rules';
@@ -7,29 +7,55 @@ import { Loader2 } from 'lucide-react';
 
 interface LevelUpModalProps {
   character: CharacterStats;
-  onConfirm: (newMaxHp: number, newSkills: Record<string, number>, newStats: StatBlock, newFeats: string[]) => void;
+  targetLevel: number; // New prop to indicate which level this modal is for
+  onConfirm: (targetLevel: number, rolledHpDie: number, newMaxHp: number, newSkills: Record<string, number>, newStats: StatBlock, newFeats: string[]) => void;
 }
 
 type LevelUpStep = 'intro' | 'hp' | 'skills' | 'feats' | 'attribute' | 'summary';
 
-export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm }) => {
-  const nextLevel = character.level + 1;
+export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, targetLevel, onConfirm }) => {
+  const nextLevel = targetLevel;
   const canBoostAttribute = nextLevel % 4 === 0;
 
   // Feat logic
   const getsStandardFeat = nextLevel % 3 === 0;
-  const getsFighterFeat = character.class === 'Fighter' && (nextLevel === 1 || nextLevel === 2 || nextLevel % 2 === 0);
+  // Fighter bonus feats: 1, 2, 4, 6, 8, etc. (every even level after 2, plus level 1)
+  const getsFighterFeat = character.class === 'Fighter' && (nextLevel === 1 || (nextLevel % 2 === 0));
   const canSelectFeat = getsStandardFeat || getsFighterFeat;
 
   const [currentStep, setCurrentStep] = useState<LevelUpStep>('intro');
   const [boostedStat, setBoostedStat] = useState<keyof StatBlock | null>(null);
-  const [rolledHp, setRolledHp] = useState<number | null>(null);
+  const [rolledHpDie, setRolledHpDie] = useState<number | null>(null); // Raw die roll for this level
   const [isRolling, setIsRolling] = useState(false);
-  const [skillRanks, setSkillRanks] = useState<Record<string, number>>({ ...character.skills });
+  const [skillRanks, setSkillRanks] = useState<Record<string, number>>({ ...character.skills }); // Prefill with current skills
   
   // Feat State
   const [selectedBaseFeat, setSelectedBaseFeat] = useState<string | null>(null);
   const [featTarget, setFeatTarget] = useState<string | null>(null);
+
+  // Fix for Errors on lines 455, 484: Cannot find name 'finalFeatName'.
+  // Define finalFeatName based on selected feat and target.
+  const finalFeatName = useMemo(() => {
+    if (!selectedBaseFeat) return null;
+    const featDef = FEATS_DB.find(f => f.name === selectedBaseFeat);
+    if (featDef?.targetType && featTarget) {
+      return `${selectedBaseFeat} (${featTarget})`;
+    }
+    return selectedBaseFeat;
+  }, [selectedBaseFeat, featTarget]);
+
+
+  // Reset internal state if character or targetLevel changes (for sequential level-ups)
+  useEffect(() => {
+    setCurrentStep('intro');
+    setBoostedStat(null);
+    setRolledHpDie(null);
+    setIsRolling(false);
+    setSkillRanks({ ...character.skills });
+    setSelectedBaseFeat(null);
+    setFeatTarget(null);
+  }, [character.level, targetLevel, character.stats, character.skills, character.feats]);
+
 
   // Derived Stats based on current selections
   const finalStats: StatBlock = useMemo(() => {
@@ -45,24 +71,41 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
   const hitDie = CLASS_HIT_DICE[character.class] || 8;
   
   // HP Calc
-  const retroactiveHp = (conMod - oldConMod) * (nextLevel - 1);
-  const hpGain = rolledHp !== null ? Math.max(1, rolledHp + conMod) + retroactiveHp : 0;
-  const newMaxHp = character.maxHp + hpGain;
+  // Retroactive CON applies to ALL previous levels.
+  // We need to calculate the *new* max HP from scratch with the current CON.
+  const baseHpFromRolls = (character.hpDieRolls || []).reduce((sum, roll) => sum + roll, 0);
+  // The rolledHpDie is the raw roll for *this* level.
+  // The actual HP gained *this* level is max(1, rolledHpDie + conMod).
   
-  // Feat Bonuses to HP
-  const finalFeatName = selectedBaseFeat && featTarget ? `${selectedBaseFeat} (${featTarget})` : selectedBaseFeat;
-  const toughnessBonus = finalFeatName === 'Toughness' ? 3 : 0;
-  const finalMaxHp = newMaxHp + toughnessBonus;
+  let featHpBonus = 0;
+  // Apply Toughness if present, assuming it's a fixed +3 HP.
+  // It should be applied once, usually at level 1 or when gained.
+  // For simplicity here, if the feat is selected, it gives +3.
+  const hasToughnessAlready = character.feats.includes("Toughness");
+  const selectedToughnessThisLevel = finalFeatName === "Toughness"; // Use finalFeatName
+
+  if (hasToughnessAlready || selectedToughnessThisLevel) {
+    featHpBonus += 3;
+  }
+  
+  // Total Max HP if this level's roll is confirmed
+  // Total HP is sum of all raw die rolls + (current CON mod * total levels) + feat bonuses
+  const totalRawDieRollsUpToThisLevel = baseHpFromRolls + (rolledHpDie || 0);
+  const potentialNewMaxHp = totalRawDieRollsUpToThisLevel + (conMod * nextLevel) + featHpBonus;
+
 
   // Skill Points Calc
   const basePoints = CLASS_SKILL_POINTS[character.class] || 2;
-  const pointsPerLevel = Math.max(1, basePoints + intMod) + (character.race === 'Human' ? 1 : 0);
+  // Human bonus feat is 4 points at level 1, not +1 per level. This is for skill points.
+  // Human bonus skill points: Humans get 1 additional skill point per level.
+  const racialSkillBonus = character.race === 'Human' ? 1 : 0;
+  const pointsPerLevel = Math.max(1, basePoints + intMod + racialSkillBonus);
   
-  const initialUsedPoints = (Object.values(character.skills) as number[]).reduce((a, b) => a + b, 0);
-  const currentUsedPoints = (Object.values(skillRanks) as number[]).reduce((a, b) => a + b, 0);
+  const initialUsedPoints = (Object.values(character.skills) as number[]).reduce((a, b) => a + b, 0); // Skills BEFORE this level-up
+  const currentUsedPoints = (Object.values(skillRanks) as number[]).reduce((a, b) => a + b, 0); // Skills AFTER modifications in modal
   const pointsSpentThisLevel = currentUsedPoints - initialUsedPoints;
   const pointsRemaining = pointsPerLevel - pointsSpentThisLevel;
-  const maxRank = nextLevel + 3;
+  const maxRank = nextLevel + 3; // Skill rank cap rule
 
   const newBAB = calculateBAB(character.class, nextLevel);
   const oldBAB = calculateBAB(character.class, character.level);
@@ -83,23 +126,28 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
     setIsRolling(true);
     await new Promise(r => setTimeout(r, 800));
     const roll = Math.floor(Math.random() * hitDie) + 1;
-    setRolledHp(roll);
+    setRolledHpDie(roll); // Store raw die roll
     setIsRolling(false);
   };
 
   const handleSkillChange = (skill: string, change: number) => {
     setSkillRanks(prev => {
-      const current = prev[skill] || 0;
-      const newVal = current + change;
+      const currentRank = prev[skill] || 0;
+      const baseRank = character.skills[skill] || 0; // The rank before this level up
+      const newVal = currentRank + change;
 
-      if (newVal < (character.skills[skill] || 0)) return prev; 
+      // Prevent going below the rank already present before this level-up
+      if (newVal < baseRank) return prev; 
+      // Prevent exceeding max rank
       if (newVal > maxRank) return prev; 
 
-      const prospectiveSpent = (currentUsedPoints - (prev[skill] || 0)) + newVal - initialUsedPoints;
-      if (prospectiveSpent > pointsPerLevel) return prev;
+      // Calculate prospective points spent this level (not total spent)
+      const prospectiveSpentThisLevel = (currentUsedPoints - currentRank) + newVal - initialUsedPoints;
+      // Prevent spending more points than available for this level
+      if (prospectiveSpentThisLevel > pointsPerLevel) return prev;
 
       const newRanks = { ...prev, [skill]: newVal };
-      if (newVal === 0) delete newRanks[skill];
+      if (newVal === 0) delete newRanks[skill]; // Remove if rank is 0
       return newRanks;
     });
   };
@@ -166,15 +214,10 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                <div className="text-center">
                  <h3 className="text-xl font-bold text-rpg-text">Vitality Increase</h3>
                  <p className="text-rpg-muted text-sm">Roll d{hitDie} + CON Mod ({conMod})</p>
-                 {retroactiveHp !== 0 && (
-                    <p className="text-xs text-rpg-success mt-1 font-bold">
-                       + {retroactiveHp} Retroactive HP (CON Increase)
-                    </p>
-                 )}
                </div>
 
                <div className="bg-rpg-900 p-8 rounded-full border-4 border-rpg-700 w-48 h-48 flex items-center justify-center relative shadow-inner">
-                 {rolledHp === null ? (
+                 {rolledHpDie === null ? (
                     isRolling ? (
                       <Loader2 className="w-16 h-16 text-rpg-accent animate-spin" />
                     ) : (
@@ -185,24 +228,23 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                     )
                  ) : (
                     <div className="text-center animate-in zoom-in duration-300">
-                      <span className="block text-5xl font-serif font-bold text-rpg-success">+{hpGain}</span>
-                      <span className="text-xs text-rpg-success uppercase font-bold mt-1 block">Total Gain</span>
+                      <span className="block text-5xl font-serif font-bold text-rpg-success">+{Math.max(1, rolledHpDie + conMod)}</span>
+                      <span className="text-xs text-rpg-success uppercase font-bold mt-1 block">HP Gain this Level</span>
                       <div className="text-[10px] text-rpg-muted mt-2">
-                         Roll ({rolledHp}) + Con ({conMod})
-                         {retroactiveHp > 0 && ` + Retro (${retroactiveHp})`}
+                         Roll ({rolledHpDie}) + Con ({conMod})
                       </div>
                     </div>
                  )}
                </div>
 
                <button 
-                  onClick={rolledHp === null ? handleRollHp : advanceStep}
+                  onClick={rolledHpDie === null ? handleRollHp : advanceStep}
                   disabled={isRolling}
                   className={`font-bold py-3 px-8 rounded-full shadow-lg transition-transform active:scale-95 flex items-center
-                    ${rolledHp === null ? 'bg-rpg-danger text-white' : 'bg-rpg-accent text-rpg-900'}
+                    ${rolledHpDie === null ? 'bg-rpg-danger text-white' : 'bg-rpg-accent text-rpg-900'}
                   `}
                >
-                  {rolledHp === null ? 'Roll Hit Die' : 'Next: Skills'}
+                  {rolledHpDie === null ? 'Roll Hit Die' : 'Next: Skills'}
                </button>
              </div>
           )}
@@ -237,7 +279,7 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                             <div className="flex items-center space-x-2">
                                <button 
                                  onClick={() => handleSkillChange(skill, -1)}
-                                 disabled={added <= 0}
+                                 disabled={currentRank <= (character.skills[skill] || 0)} // Can't go below initial rank
                                  className="w-8 h-8 flex items-center justify-center bg-rpg-800 hover:bg-rpg-700 border border-rpg-700 rounded text-rpg-text disabled:opacity-20"
                                >-</button>
                                <span className="w-6 text-center font-mono font-bold text-rpg-text">{currentRank}</span>
@@ -274,8 +316,11 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
 
                   <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2">
                       {FEATS_DB.map((feat) => {
-                          const available = checkFeatPrerequisites(character, feat.name);
-                          if (!available) return null; // Hiding locked feats per v1.6 spec
+                          const available = checkFeatPrerequisites(character, feat.name, nextLevel); // Pass nextLevel for prereq check
+                          // Only display feats that are available
+                          if (!available) {
+                            return null;
+                          }
 
                           const isSelected = selectedBaseFeat === feat.name;
                           
@@ -403,7 +448,7 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                         <div className="space-y-2">
                              <div className="flex justify-between">
                                 <span className="text-rpg-text">Hit Points</span>
-                                <span className="text-rpg-success font-bold">{character.maxHp} ➔ {finalMaxHp} <span className="text-xs opacity-70">(+{finalMaxHp - character.maxHp})</span></span>
+                                <span className="text-rpg-success font-bold">{character.maxHp} ➔ {potentialNewMaxHp} <span className="text-xs opacity-70">(+{potentialNewMaxHp - character.maxHp})</span></span>
                              </div>
                              {boostedStat && (
                                  <div className="flex justify-between">
@@ -426,7 +471,8 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                                 <span className="text-rpg-text">Base Attack Bonus</span>
                                 <span className="text-rpg-danger font-bold">+{oldBAB} ➔ +{newBAB}</span>
                              </div>
-                             {selectedBaseFeat && (
+                             {/* Fix: Use the defined finalFeatName */}
+                             {finalFeatName && (
                                  <div className="flex justify-between items-start">
                                     <span className="text-rpg-text">New Feat</span>
                                     <span className="text-rpg-warning font-bold text-right">{finalFeatName}</span>
@@ -438,6 +484,18 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                                     <span className="text-rpg-success font-bold">Increased</span>
                                 </div>
                              )}
+                             {newSaves.ref > oldSaves.ref && (
+                                <div className="flex justify-between">
+                                    <span className="text-rpg-text">Reflex Save</span>
+                                    <span className="text-rpg-success font-bold">Increased</span>
+                                </div>
+                             )}
+                             {newSaves.will > oldSaves.will && (
+                                <div className="flex justify-between">
+                                    <span className="text-rpg-text">Will Save</span>
+                                    <span className="text-rpg-success font-bold">Increased</span>
+                                </div>
+                             )}
                         </div>
                     </div>
                 </div>
@@ -446,10 +504,12 @@ export const LevelUpModal: React.FC<LevelUpModalProps> = ({ character, onConfirm
                    <button 
                      onClick={() => {
                          const feats = [...(character.feats || [])];
+                         // Fix: Use the defined finalFeatName
                          if (finalFeatName) feats.push(finalFeatName);
-                         onConfirm(finalMaxHp, skillRanks, finalStats, feats);
+                         onConfirm(targetLevel, rolledHpDie || 1, potentialNewMaxHp, skillRanks, finalStats, feats);
                      }}
-                     className="bg-rpg-success hover:bg-green-400 text-rpg-900 font-bold py-4 px-12 rounded-full shadow-2xl transition-transform active:scale-95 flex items-center text-lg"
+                     disabled={rolledHpDie === null} // Prevent confirming if HP not rolled
+                     className="bg-rpg-success hover:bg-green-400 text-rpg-900 font-bold py-4 px-12 rounded-full shadow-2xl transition-transform active:scale-95 flex items-center text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                    >
                      <CheckCircle2 className="mr-2 w-6 h-6" /> Apply Level Up
                    </button>

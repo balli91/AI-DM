@@ -20,8 +20,13 @@ export interface CharacterStats {
   };
   skills: Record<string, number>;
   feats: string[]; // Acquired feats
+  hpDieRolls: number[]; // Raw die rolls for HP at each level
+  previousMaxHp: number; // Store maxHp from before the current level-up sequence began
   passives?: string[]; // Acquired passive traits (e.g. Darkvision, Tremorsense)
 }
+
+// Export StatBlock for use in App.tsx
+export type StatBlock = { strength: number; dexterity: number; constitution: number; intelligence: number; wisdom: number; charisma: number; };
 
 export type EconomyDifficulty = 'Low' | 'Normal' | 'High';
 
@@ -59,6 +64,9 @@ export interface ActiveRoll {
   rollType: 'attack' | 'damage' | 'save' | 'skill' | 'initiative' | 'generic';
   description: string; // "Attack Roll vs Goblin", "Fireball Damage"
   dice: string; // "1d20+5", "8d6"
+  minRoll?: number; // For animations
+  maxRoll?: number; // For animations
+  onRollComplete?: (total: number, breakdown: string, rawDie: number) => void; // Callback after animation
 }
 
 export interface GameState {

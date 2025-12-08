@@ -1,23 +1,19 @@
-
-
-
-
-import React, { useState, useRef, useEffect } from 'react';
-import { GameStatus, GameState, Message, CharacterStats, EconomyDifficulty } from './types';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { GameStatus, GameState, Message, CharacterStats, EconomyDifficulty, ActiveRoll, StatBlock } from './types'; // Imported StatBlock from types.ts
 import { initGame, processTurn } from './services/geminiService';
 import { CharacterSheet } from './components/CharacterSheet';
 import { InventoryView } from './components/InventoryView';
 import { QuestJournal } from './components/QuestJournal';
-import { CombatTracker } from './components/CombatTracker';
 import { LevelUpModal } from './components/LevelUpModal';
 import { AppSidebar, MenuView } from './components/AppSidebar';
 import { Encyclopedia } from './components/Encyclopedia';
+import { CombatTracker } from './components/CombatTracker'; // Fix: Import CombatTracker component
 import { getStartingPackage, StartingPackage } from './data/startingGear';
 import { formatPrice } from './utils/economy';
-import { rollDiceExpression } from './utils/rules';
+import { rollDiceExpression, getDieMinMax } from './utils/rules';
 import { Loader2, Send, Sword, Skull, Heart, Menu, X, Scroll, Backpack, Dice5, ChevronRight, RefreshCw, User, Edit, ArrowRight, Dices, GraduationCap, Medal, Eye, Coins, Book, Map, Crown, Shield, Zap, Sparkles } from 'lucide-react';
 import { 
-  StatBlock, 
+  // StatBlock, // Removed as StatBlock is imported from types.ts
   BASE_STATS, 
   RACE_MODIFIERS, 
   CLASS_MODIFIERS, 
@@ -27,7 +23,8 @@ import {
   BEGINNER_ARRAY, 
   PRO_ARRAY,
   EXP_REQUIREMENT,
-  CLASS_SKILL_POINTS
+  CLASS_SKILL_POINTS,
+  FEATS_DB
 } from './constants';
 
 const LoadingScreen = ({ message }: { message: string }) => (
@@ -36,6 +33,45 @@ const LoadingScreen = ({ message }: { message: string }) => (
     <p className="text-lg text-rpg-muted font-serif italic">{message}</p>
   </div>
 );
+
+const DiceAnimation = ({ dice, minRoll, maxRoll, onRollComplete }: { dice: string; minRoll: number; maxRoll: number; onRollComplete: (total: number, breakdown: string, rawDie: number) => void; }) => {
+  const [currentRoll, setCurrentRoll] = useState<number | null>(null);
+  const animationDuration = 800; // ms
+
+  useEffect(() => {
+    let animationFrameId: number;
+    let startTime: number;
+
+    const animate = (timestamp: number) => {
+      if (!startTime) startTime = timestamp;
+      const progress = timestamp - startTime;
+
+      if (progress < animationDuration) {
+        // Generate a random number within the min/max range for visual effect
+        setCurrentRoll(Math.floor(Math.random() * (maxRoll - minRoll + 1)) + minRoll);
+        animationFrameId = requestAnimationFrame(animate);
+      } else {
+        // Animation finished, calculate and send actual roll result
+        const { total, breakdown, rawDie } = rollDiceExpression(dice);
+        setCurrentRoll(total);
+        onRollComplete(total, breakdown, rawDie);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [dice, minRoll, maxRoll, onRollComplete]);
+
+  return (
+    <div className="relative flex flex-col items-center justify-center">
+      <Dices className="w-12 h-12 text-rpg-accent animate-bounce mb-2" />
+      <span className="text-5xl font-serif font-bold text-rpg-accent">{currentRoll === null ? '?' : currentRoll}</span>
+      <span className="text-xs text-rpg-muted mt-2">Rolling...</span>
+    </div>
+  );
+};
+
 
 const StartingGearModal = ({ 
   pkg, 
@@ -108,11 +144,9 @@ const StartingGearModal = ({
 const getModifiers = (race: string, cls: string): StatBlock => {
   const raceMods = RACE_MODIFIERS[race] || {};
   const classMods = CLASS_MODIFIERS[cls] || {};
-  const mods = { ...BASE_STATS };
-  Object.keys(mods).forEach(k => { mods[k as keyof StatBlock] = 0; });
+  const mods: StatBlock = { ...BASE_STATS };
   (Object.keys(mods) as Array<keyof StatBlock>).forEach(key => {
-    mods[key] += (raceMods[key] || 0);
-    mods[key] += (classMods[key] || 0);
+    mods[key] = (raceMods[key] || 0) + (classMods[key] || 0);
   });
   return mods;
 };
@@ -141,7 +175,7 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
     const [isRolling, setIsRolling] = useState(false);
     
     // HP State
-    const [rolledHp, setRolledHp] = useState<number | null>(null);
+    const [rolledHpDie, setRolledHpDie] = useState<number | null>(null); // Raw die roll, not total HP
     const [displayHp, setDisplayHp] = useState<number | null>(null);
     const [isRollingHp, setIsRollingHp] = useState(false);
     
@@ -149,24 +183,24 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
     const [assignments, setAssignments] = useState<Record<string, number | null>>({strength: null, dexterity: null, constitution: null, intelligence: null, wisdom: null, charisma: null});
     const [skillRanks, setSkillRanks] = useState<Record<string, number>>({});
 
-    // Calculations
-    const finalStats = (() => {
+    const finalStats: StatBlock = useMemo(() => {
         const mods = getModifiers(race, cls);
-        const result: any = {};
-        Object.keys(assignments).forEach(key => {
+        const result: StatBlock = { ...BASE_STATS }; 
+        (Object.keys(BASE_STATS) as Array<keyof StatBlock>).forEach(key => {
             const poolIndex = assignments[key];
-            const baseVal = poolIndex !== null ? statPool[poolIndex] : 0;
-            result[key] = baseVal + (mods[key as keyof StatBlock] || 0);
+            const baseVal = (typeof poolIndex === 'number') ? statPool[poolIndex] : 0;
+            const modVal = mods[key] || 0;
+            result[key] = Number(baseVal) + Number(modVal);
         });
-        return result as StatBlock;
-    })();
+        return result;
+    }, [assignments, statPool, race, cls]);
 
     // Handlers
     const submitDetails = (e: React.FormEvent) => { e.preventDefault(); if (!name.trim()) return; setStep('method'); };
     const handleGenerateName = (e: React.MouseEvent) => { e.preventDefault(); setName(generateName(race)); };
     
     const selectMethod = (method: 'beginner' | 'pro' | 'gambler') => {
-        setRolledHp(null);
+        setRolledHpDie(null);
         setAssignments({ strength: null, dexterity: null, constitution: null, intelligence: null, wisdom: null, charisma: null });
         setSkillRanks({});
         setGamblerRolls([]);
@@ -222,7 +256,7 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
             newAssign[statKey] = poolIndex;
             return newAssign;
         });
-        if (statKey === 'constitution') setRolledHp(null);
+        if (statKey === 'constitution') setRolledHpDie(null);
     };
 
     const rollHp = async () => {
@@ -238,15 +272,14 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
              const now = Date.now();
              if (now - startTime < duration) {
                  const roll = Math.floor(Math.random() * hitDie) + 1;
-                 const total = Math.max(1, roll + conMod);
+                 const total = Math.max(1, roll + conMod); // Display total HP during animation
                  setDisplayHp(total);
                  requestAnimationFrame(animate);
              } else {
-                 const finalRoll = Math.floor(Math.random() * hitDie) + 1;
-                 const total = Math.max(1, finalRoll + conMod);
-                 setDisplayHp(null);
-                 setRolledHp(total);
+                 const finalRoll = Math.floor(Math.random() * hitDie) + 1; // Raw die roll
+                 setRolledHpDie(finalRoll); // Store raw die roll
                  setIsRollingHp(false);
+                 setDisplayHp(null); // Clear display HP
              }
         };
         animate();
@@ -269,7 +302,7 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
 
     const handleSkillChange = (skill: string, change: number) => {
         const { remaining } = getSkillPointsData();
-        const currentRank = skillRanks[skill] || 0;
+        const currentRank: number = Number(skillRanks[skill] || 0);
         const maxRank = 4; // Level 1 Cap (3 + Level)
 
         if (change > 0) {
@@ -282,19 +315,38 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
             if (currentRank <= 0) return;
         }
 
-        const newVal = currentRank + change;
+        const newVal = Number(currentRank) + Number(change);
         const newRanks = { ...skillRanks, [skill]: newVal };
         if (newVal === 0) delete newRanks[skill];
         setSkillRanks(newRanks);
     };
 
     const handleEnterWorld = () => {
-        const finalHp = rolledHp || (CLASS_HIT_DICE[cls] || 8) + Math.floor((finalStats.constitution - 10) / 2);
+        const conMod = Math.floor((finalStats.constitution - 10) / 2);
+        const initialHpDie = rolledHpDie || Math.max(1, (CLASS_HIT_DICE[cls] || 8)); // Raw die roll, minimum 1
+        const finalMaxHp = Math.max(1, initialHpDie + conMod); // Level 1 total HP
+        
         const pkg = getStartingPackage(cls, race, economy);
         const eqList = pkg.items.map(i => i.qty > 1 ? `${i.name} (${i.qty})` : i.name);
         eqList.push(`${pkg.coins} gp`);
-        // Feats start empty for now, or could grant Racial feats if we added logic.
-        const charData: Partial<CharacterStats> = { name, race, class: cls, stats: finalStats, level: 1, maxHp: finalHp, hp: finalHp, skills: skillRanks, feats: [] };
+        
+        // Feats start empty, but humans get one. Add default for human.
+        const startingFeats: string[] = race === 'Human' ? ['Human Bonus Feat'] : [];
+
+        const charData: Partial<CharacterStats> = { 
+            name, 
+            race, 
+            class: cls, 
+            stats: finalStats, 
+            level: 1, 
+            maxHp: finalMaxHp, 
+            hp: finalMaxHp, 
+            xp: 0,
+            skills: skillRanks, 
+            feats: startingFeats,
+            hpDieRolls: [initialHpDie], // Store the raw die roll for level 1
+            previousMaxHp: finalMaxHp, // Initial previousMaxHp is the same as maxHp at level 1
+        };
         onStart(charData, background, eqList, setting, economy);
     };
 
@@ -483,14 +535,14 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
                                             </span>
                                         ))}
                                     </div>
-                                </button>
+                                </div>
                             ))}
                         </div>
                     </div>
 
                     {/* Dynamic HP Roller with Animation */}
                     <div className={`transition-all duration-500 ${assignments['constitution'] !== null ? 'opacity-100 translate-y-0' : 'opacity-50 translate-y-4 pointer-events-none grayscale'}`}>
-                        {rolledHp === null && !isRollingHp ? (
+                        {rolledHpDie === null && !isRollingHp ? (
                             <button 
                                 onClick={rollHp} 
                                 disabled={isRollingHp}
@@ -512,8 +564,8 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
                                 ) : (
                                     <>
                                         <div className="absolute inset-0 bg-rpg-danger/10 animate-pulse"></div>
-                                        <span className="text-xs text-rpg-danger font-bold uppercase tracking-widest mb-1 z-10">Max HP</span>
-                                        <span className="text-6xl font-serif font-bold text-rpg-text z-10 drop-shadow-lg">{rolledHp}</span>
+                                        <span className="text-xs text-rpg-danger font-bold uppercase tracking-widest mb-1 z-10">HP Die Roll</span>
+                                        <span className="text-6xl font-serif font-bold text-rpg-text z-10 drop-shadow-lg">{rolledHpDie}</span>
                                         <button onClick={rollHp} className="absolute bottom-2 right-2 p-1 text-rpg-muted hover:text-rpg-text"><RefreshCw size={12}/></button>
                                     </>
                                 )}
@@ -523,7 +575,7 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
                     
                     <button 
                         onClick={() => setStep('skills')} 
-                        disabled={Object.values(assignments).some(v => v === null) || (rolledHp === null && !isRollingHp)} 
+                        disabled={Object.values(assignments).some(v => v === null) || (rolledHpDie === null && !isRollingHp)} 
                         className="mt-auto w-full bg-rpg-accent disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 text-rpg-900 py-3 rounded font-bold shadow-lg"
                     >
                         Next: Skills
@@ -630,7 +682,9 @@ const SetupScreen = ({ onStart }: { onStart: (data: Partial<CharacterStats>, bg:
                             <div className="text-xs text-rpg-muted">Level 1 Start</div>
                         </div>
                     </div>
-                    <span className="text-4xl font-serif font-bold text-rpg-danger">{rolledHp}</span>
+                    <span className="text-4xl font-serif font-bold text-rpg-danger">
+                        {rolledHpDie !== null ? Math.max(1, rolledHpDie + Math.floor((finalStats.constitution - 10) / 2)) : '??'}
+                    </span>
                 </div>
 
                 <button onClick={handleEnterWorld} className="w-full bg-rpg-accent hover:bg-rpg-accent-glow text-rpg-900 font-bold py-4 rounded-lg shadow-lg flex items-center justify-center transition-all hover:scale-[1.02] active:scale-[0.98]">
@@ -651,8 +705,10 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'play' | 'character' | 'inventory' | 'quest' | 'map'>('play');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  
   const [showLevelUpModal, setShowLevelUpModal] = useState(false);
-  const [isRollingDice, setIsRollingDice] = useState(false);
+  const [levelsToProcess, setLevelsToProcess] = useState<number[]>([]); // Queue of levels to go through
+  const [currentLevelUpTarget, setCurrentLevelUpTarget] = useState<number | null>(null); // The specific level being processed by the modal
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [apiHistory, setApiHistory] = useState<{ role: 'user' | 'model', parts: [{ text: string }] }[]>([]);
@@ -669,15 +725,54 @@ const App: React.FC = () => {
     if (activeTab === 'play' && chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
-  }, [messages, status, activeTab, isRollingDice]);
+  }, [messages, status, activeTab]); // Removed isRollingDice from here
 
+  // Level Up Triggering Logic
   useEffect(() => {
     if (gameState && status === GameStatus.PLAYING) {
       const { character } = gameState;
       const xpThreshold = EXP_REQUIREMENT(character.level);
-      if (character.xp >= xpThreshold && !showLevelUpModal) setShowLevelUpModal(true);
+      
+      // If XP is met for the next level AND no level-up is currently in progress
+      if (character.xp >= xpThreshold && levelsToProcess.length === 0 && !showLevelUpModal) {
+        queueLevelUps(character.level + 1);
+      }
     }
-  }, [gameState, status]);
+  }, [gameState?.character?.xp, gameState?.character?.level, status, showLevelUpModal, levelsToProcess]);
+
+
+  // Effect to display the next level-up modal from the queue
+  useEffect(() => {
+    if (levelsToProcess.length > 0 && !showLevelUpModal) {
+        const nextLevel = levelsToProcess[0];
+        setCurrentLevelUpTarget(nextLevel);
+        setShowLevelUpModal(true);
+    } else if (levelsToProcess.length === 0 && showLevelUpModal) {
+        // If queue is empty but modal is still open, close it (shouldn't happen with proper flow)
+        setShowLevelUpModal(false);
+        setCurrentLevelUpTarget(null);
+    }
+  }, [levelsToProcess, showLevelUpModal]);
+
+  const queueLevelUps = useCallback((startLevel: number) => {
+    if (!gameState) return;
+    const { character } = gameState;
+    const newLevels: number[] = [];
+    let currentCheckLevel = character.level;
+    let currentXP = character.xp;
+
+    // Determine all levels to gain in this sequence
+    while (currentXP >= EXP_REQUIREMENT(currentCheckLevel)) {
+        currentCheckLevel++;
+        newLevels.push(currentCheckLevel);
+    }
+
+    if (newLevels.length > 0) {
+        setLevelsToProcess(newLevels);
+        setGameState(prev => prev ? { ...prev, character: { ...prev.character, previousMaxHp: prev.character.maxHp } } : null);
+    }
+  }, [gameState]);
+
 
   const handleStartGame = async (charData: Partial<CharacterStats>, background: string, equipment: string[], setting: string, economy: EconomyDifficulty) => {
     setStatus(GameStatus.LOADING);
@@ -692,42 +787,67 @@ const App: React.FC = () => {
     } catch (e) { console.error(e); setStatus(GameStatus.ERROR); }
   };
 
-  const handleLevelUpConfirm = async (newMaxHp: number, newSkills: Record<string, number>, newStats: StatBlock, newFeats: string[]) => {
-    if (!gameState) return;
-    const newLevel = gameState.character.level + 1;
+  const handleLevelUpConfirm = async (
+    targetLevel: number,
+    rolledHpDie: number, 
+    newMaxHp: number, 
+    newSkills: Record<string, number>, 
+    newStats: StatBlock, 
+    newFeats: string[]
+  ) => {
+    if (!gameState || targetLevel !== currentLevelUpTarget) return;
+
+    // Calculate actual HP gain
+    const conMod = Math.floor((newStats.constitution - 10) / 2);
+    // Adjust HP gain for retroactive CON changes
+    const previousMaxHpForCalc = gameState.character.previousMaxHp;
+    const currentMaxHpAtStartOfLevel = gameState.character.maxHp;
+    const hpGainedThisLevelRaw = Math.max(1, rolledHpDie + conMod); // Roll + current CON
+    const totalHpGain = newMaxHp - previousMaxHpForCalc; // Total gain including retroactive if CON changed early in a multi-level sequence
     
-    // Calculate hp difference to heal the amount gained
-    const hpGain = newMaxHp - gameState.character.maxHp;
-    const currentHp = gameState.character.hp + hpGain;
+    // Ensure current HP increases by the difference in max HP from before this level-up sequence
+    const hpDifferenceFromPreviousMax = newMaxHp - currentMaxHpAtStartOfLevel;
+    const currentHp = gameState.character.hp + hpDifferenceFromPreviousMax;
 
     const updatedCharacter = { 
         ...gameState.character, 
-        level: newLevel, 
+        level: targetLevel, 
         maxHp: newMaxHp, 
-        hp: currentHp,
+        hp: Math.max(1, currentHp), // Ensure HP doesn't drop below 1
         skills: newSkills,
-        stats: newStats || gameState.character.stats,
-        feats: newFeats || gameState.character.feats
+        stats: newStats,
+        feats: newFeats,
+        hpDieRolls: [...(gameState.character.hpDieRolls || []), rolledHpDie], // Append raw die roll
+        // previousMaxHp remains the original MaxHP before any multi-leveling started until all levels are processed.
+        // It will be reset after the last level.
     };
-
     setGameState({ ...gameState, character: updatedCharacter });
-    setShowLevelUpModal(false);
     
-    // Create detailed message for AI synchronization (v1.6 requirement: update all stats including feats)
-    const statsDetail = newStats ? `Stats updated: STR ${newStats.strength}, DEX ${newStats.dexterity}, CON ${newStats.constitution}, INT ${newStats.intelligence}, WIS ${newStats.wisdom}, CHA ${newStats.charisma}.` : "Stats unchanged.";
+    // Remove the current level from the queue
+    setLevelsToProcess(prev => prev.slice(1));
+    
+    // Create detailed message for AI synchronization
+    const statsDetail = `Stats updated: STR ${newStats.strength}, DEX ${newStats.dexterity}, CON ${newStats.constitution}, INT ${newStats.intelligence}, WIS ${newStats.wisdom}, CHA ${newStats.charisma}.`;
     const skillDetail = `Skill ranks updated.`;
     const featDetail = newFeats.length > (gameState.character.feats?.length || 0) ? `New Feat: ${newFeats[newFeats.length-1]}.` : "No new feats.";
 
-    const systemUpdateMsg = `[SYSTEM UPDATE] Player manually leveled up to Level ${newLevel}. New MaxHP: ${newMaxHp}. ${statsDetail} ${skillDetail} ${featDetail} Please update derived stats (AC, Saving Throws, Attack Bonuses, Feat Effects) in your internal state.`;
+    const systemUpdateMsg = `[SYSTEM UPDATE] Player manually leveled up to Level ${targetLevel}. New MaxHP: ${newMaxHp} (HP Die Rolled: ${rolledHpDie}). ${statsDetail} ${skillDetail} ${featDetail} Please update derived stats (AC, Saving Throws, Attack Bonuses, Feat Effects) in your internal state.`;
     
-    setMessages(prev => [...prev, { id: 'lvl-sys', sender: 'system', text: `Level Up! Reached Level ${newLevel}.`, timestamp: Date.now() }]);
+    setMessages(prev => [...prev, { id: `lvl-sys-${targetLevel}`, sender: 'system', text: `Level Up to Level ${targetLevel}!`, timestamp: Date.now() }]);
     
     try {
         const response = await processTurn(apiHistory, systemUpdateMsg);
         setGameState(response.gameState);
         setApiHistory(prev => [...prev, { role: 'user', parts: [{ text: systemUpdateMsg }] }, { role: 'model', parts: [{ text: JSON.stringify(response) }] }]);
-        setMessages(prev => [...prev, { id: Date.now()+'-dm', sender: 'dm', text: response.narrative, timestamp: Date.now() }]);
+        setMessages(prev => [...prev.filter(m=>m.id!==`load-dm-${targetLevel}`), { id: Date.now()+'-dm', sender: 'dm', text: response.narrative, timestamp: Date.now() }]);
     } catch (e) { console.error(e); }
+
+    // If this was the last level in the queue, reset previousMaxHp and close modal
+    if (levelsToProcess.length === 1) { // 1 because slice(1) hasn't updated state yet
+      setGameState(prev => prev ? { ...prev, character: { ...prev.character, previousMaxHp: updatedCharacter.maxHp } } : null);
+      setShowLevelUpModal(false);
+      setCurrentLevelUpTarget(null);
+    }
   };
 
   const handleSendAction = async (e?: React.FormEvent) => {
@@ -741,38 +861,45 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, { id: tempId, sender: 'system', text: 'Thinking...', timestamp: Date.now() }]);
     try {
       const response = await processTurn(apiHistory, userAction);
-      setGameState(response.gameState);
+      
+      // If the AI sets an active roll, we need to pass the min/max to the DiceAnimation
+      if (response.gameState.activeRoll) {
+        const { min, max } = getDieMinMax(response.gameState.activeRoll.dice);
+        setGameState({ 
+            ...response.gameState, 
+            activeRoll: { 
+                ...response.gameState.activeRoll, 
+                minRoll: min, 
+                maxRoll: max,
+            }
+        });
+      } else {
+        setGameState(response.gameState);
+      }
+      
       setApiHistory(prev => [...prev, { role: 'user', parts: [{ text: userAction }] }, { role: 'model', parts: [{ text: JSON.stringify(response) }] }]);
       setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: Date.now()+'-dm', sender: 'dm', text: response.narrative, timestamp: Date.now() }]);
     } catch (error) { setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: 'err', sender: 'system', text: "Connection failed.", timestamp: Date.now(), type: 'error' }]); }
   };
 
-  const handleActiveRoll = async () => {
+  const handleRollComplete = useCallback(async (total: number, breakdown: string, rawDie: number) => {
     if (!gameState?.activeRoll) return;
-    setIsRollingDice(true);
-
-    const { dice, description } = gameState.activeRoll;
-    
-    // Simulate Roll Animation
-    await new Promise(r => setTimeout(r, 600));
-
-    // Calculate Roll in JS
-    const { total, breakdown, rawDie } = rollDiceExpression(dice);
-    
-    setIsRollingDice(false);
 
     // Construct System Message
-    const systemMsg = `[SYSTEM] Player rolled for ${description}. Result: ${total} (Formula: ${dice}, Breakdown: ${breakdown})`;
+    const systemMsg = `[SYSTEM] Player rolled for ${gameState.activeRoll.description}. Result: ${total} (Formula: ${gameState.activeRoll.dice}, Breakdown: ${breakdown})`;
     
     // Add visual feedback to chat
     const rollMsg: Message = { 
         id: Date.now().toString(), 
         sender: 'system', 
-        text: `🎲 ${description}: ${total} (${breakdown})`, 
+        text: `🎲 ${gameState.activeRoll.description}: ${total} (${breakdown})`, 
         timestamp: Date.now(),
         type: 'roll'
     };
     setMessages(prev => [...prev, rollMsg]);
+
+    // Clear active roll immediately to disable the button
+    setGameState(prev => prev ? { ...prev, activeRoll: null } : null);
     
     // Send to AI
     const tempId = 'load-'+Date.now();
@@ -786,7 +913,8 @@ const App: React.FC = () => {
     } catch (error) {
          setMessages(prev => [...prev.filter(m=>m.id!==tempId), { id: 'err', sender: 'system', text: "Connection failed.", timestamp: Date.now(), type: 'error' }]);
     }
-  };
+  }, [gameState?.activeRoll, apiHistory, processTurn]);
+
 
   if (status === GameStatus.SETUP) {
     return (
@@ -809,7 +937,14 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-rpg-950 overflow-hidden relative font-sans text-rpg-text">
-      {showLevelUpModal && <LevelUpModal character={gameState.character} onConfirm={handleLevelUpConfirm} />}
+      {showLevelUpModal && currentLevelUpTarget && (
+        <LevelUpModal 
+          key={currentLevelUpTarget} // Force remount to reset internal state for each new level
+          character={gameState.character} 
+          targetLevel={currentLevelUpTarget}
+          onConfirm={handleLevelUpConfirm} 
+        />
+      )}
 
       <div className="hidden md:flex flex-col w-20 bg-rpg-900 border-r border-rpg-700 items-center py-6 space-y-6 z-20 shadow-xl">
           <div className="w-10 h-10 bg-rpg-800 rounded-full flex items-center justify-center border border-rpg-700 text-rpg-accent mb-4 shadow-lg"><Dice5 /></div>
@@ -892,12 +1027,16 @@ const App: React.FC = () => {
                                    </div>
                                </div>
                                <button 
-                                   onClick={handleActiveRoll}
-                                   disabled={isRollingDice}
+                                   // onClick={() => handleActiveRoll(gameState.activeRoll)}
+                                   disabled={false} // The DiceAnimation handles the "rolling" state
                                    className="bg-rpg-accent hover:bg-rpg-accent-glow text-rpg-900 font-bold py-3 px-12 rounded-full shadow-xl flex items-center text-lg transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                                >
-                                   <Dices className={`mr-2 w-6 h-6 ${isRollingDice ? 'animate-spin' : ''}`} />
-                                   {isRollingDice ? 'Rolling...' : 'Roll Dice'}
+                                   <DiceAnimation 
+                                     dice={gameState.activeRoll.dice} 
+                                     minRoll={gameState.activeRoll.minRoll || 1} 
+                                     maxRoll={gameState.activeRoll.maxRoll || 20} 
+                                     onRollComplete={handleRollComplete} 
+                                   />
                                </button>
                            </div>
                        ) : (

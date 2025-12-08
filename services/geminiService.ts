@@ -44,7 +44,7 @@ const characterSchema = {
         },
         required: ["name", "rank"]
       },
-      nullable: true
+      nullable: true // Added nullable for optional skills
     },
     feats: {
       type: Type.ARRAY,
@@ -52,6 +52,13 @@ const characterSchema = {
       items: { type: Type.STRING },
       nullable: true
     },
+    hpDieRolls: {
+      type: Type.ARRAY,
+      description: "Array of raw HP die rolls for each level. Index 0 is level 1, etc.",
+      items: { type: Type.INTEGER },
+      nullable: true
+    },
+    previousMaxHp: { type: Type.INTEGER, description: "The character's max HP before any potential multi-level-up sequence began." },
     passives: {
       type: Type.ARRAY,
       description: "Acquired passive abilities or senses (e.g. 'Darkvision', 'Tremorsense'). Leave empty at level 1 unless specified by race/class.",
@@ -59,7 +66,7 @@ const characterSchema = {
       nullable: true
     }
   },
-  required: ["name", "race", "class", "level", "hp", "maxHp", "xp", "ac", "inventory", "stats", "feats"]
+  required: ["name", "race", "class", "level", "hp", "maxHp", "xp", "ac", "inventory", "stats", "feats", "hpDieRolls", "previousMaxHp"]
 };
 
 const worldSchema = {
@@ -80,7 +87,7 @@ const worldSchema = {
         },
         required: ["name", "status"]
       },
-      nullable: true
+      nullable: true // Added nullable for optional reputation
     }
   },
   required: ["location", "quest", "timeOfDay"]
@@ -103,7 +110,9 @@ const activeRollSchema = {
   properties: {
     rollType: { type: Type.STRING, enum: ['attack', 'damage', 'save', 'skill', 'initiative', 'generic'] },
     description: { type: Type.STRING, description: "The specific context e.g. 'Attack with Longsword', 'Reflex Save', 'Spot Check'." },
-    dice: { type: Type.STRING, description: "The dice formula to roll, e.g. '1d20+5' or '1d8+3'." }
+    dice: { type: Type.STRING, description: "The dice formula to roll, e.g. '1d20+5' or '1d8+3'." },
+    minRoll: { type: Type.INTEGER, description: "Minimum possible result for dice animation (usually 1 for d20, sum of 1s for multiple dice)." },
+    maxRoll: { type: Type.INTEGER, description: "Maximum possible result for dice animation (usually 20 for d20, sum of maxes for multiple dice)." }
   },
   required: ["rollType", "description", "dice"]
 };
@@ -173,13 +182,14 @@ Your goal is to provide immersive, descriptive, and fair gameplay using D&D 3.5 
 
 ===========================================================
 SYSTEM UPDATE: PLAYER-CONTROLLED DICE & INTERACTIVE LEVEL-UP
-Version: v1.6 (Core Update)
+Version: v1.4.1 (Hotfix Patch)
 ===========================================================
 
 SECTION 1 — ABSOLUTE DICE RULE
 1. **NEVER** auto-roll dice for the player's actions (Attack, Damage, Save, Skill, Initiative).
 2. If an action requires a roll, you MUST:
    - Set \`gameState.activeRoll\` with the correct type, description, and formula.
+   - **Crucially**: Also set \`minRoll\` and \`maxRoll\` in \`gameState.activeRoll\` for dice roll animations (e.g., 1 and 20 for 1d20, 2 and 12 for 2d6).
    - **PAUSE** the narrative flow.
    - Answer: "Please roll [Check Name]..." and WAIT.
 3. If the player says "I attack":
@@ -187,18 +197,26 @@ SECTION 1 — ABSOLUTE DICE RULE
    - Ask for the Attack Roll.
 4. Once the player provides the roll (via system message), ONLY THEN resolve the outcome.
 
-SECTION 2 — LEVEL-UP MECHANICS (v1.6)
+SECTION 2 — LEVEL-UP MECHANICS (v1.6 Core Update Integration)
 1. **Interactive UI Flow**: 
-   - When XP threshold is reached, the APP handles the UI logic (HP Roll -> Skills -> Feats -> Attributes).
+   - When XP threshold is reached, or a //DEV command triggers a level-up, the APP handles the UI logic (HP Roll -> Skills -> Feats -> Attributes).
    - You will receive a [SYSTEM UPDATE] message with the new stats.
    - **Update your internal state** based on that message.
+   - **IMPORTANT**: During //DEV multi-level-ups, the app will send a separate SYSTEM UPDATE message for *each* level gained. Only process the changes for the level specified in that update, and only update your internal state for that level.
+   - **Never trigger additional level-ups beyond what was explicitly requested or earned by XP.**
+
 2. **Feats**: 
    - Characters gain feats at levels 1, 3, 6, 9, 12, 15, 18.
    - Fighters gain bonus feats at 1, 2, 4, 6, 8, etc.
    - Humans gain a bonus feat at level 1.
+
 3. **Attribute Allocation**:
    - Every 4th level (4, 8, 12, 16, 20), one ability score increases by 1.
    - Update ALL dependent stats immediately.
+
+4. **HP Tracking**:
+   - The character's \`hpDieRolls\` will contain the raw die result for HP gained at each level.
+   - The \`previousMaxHp\` field tracks the \`maxHp\` at the start of any multi-level-up sequence, ensuring proper HP gain calculation if CON changes.
 
 SECTION 3 — BASE ATTACK BONUS & ITERATIVE ATTACKS
 1. BAB per character is read from database/stats.
@@ -212,6 +230,7 @@ SECTION 4 — ARMOR CLASS (AC)
 1. Base AC = 10 + Armor Bonus + Shield Bonus + DEX modifier + Size Mod + Natural Armor + Deflection + Dodge (Feat).
 2. Include temporary modifiers: Spells, buffs, equipment, conditions.
 3. Apply armor check penalties and spell failure where applicable.
+4. **Shields**: If a two-handed weapon is actively wielded, a shield provides no AC bonus. If a shield is equipped, ensure its bonus is calculated and applied to the total AC, and displayed in the character sheet. If a shield is equipped but provides 0 AC (e.g., due to 2H weapon), ensure that reason is noted.
 
 SECTION 5 — DAMAGE CALCULATION
 1. Melee Weapons:
@@ -252,6 +271,10 @@ const transformResponse = (json: any): TurnResponse => {
       if (!Array.isArray(json.gameState.character.feats)) {
           json.gameState.character.feats = [];
       }
+      // Ensure hpDieRolls is an array
+      if (!Array.isArray(json.gameState.character.hpDieRolls)) {
+        json.gameState.character.hpDieRolls = [];
+      }
     }
 
     // Transform Reputation (Array -> Object)
@@ -264,6 +287,8 @@ const transformResponse = (json: any): TurnResponse => {
            }
          });
          json.gameState.world.reputation = repRecord;
+       } else if (!json.gameState.world.reputation) { // Ensure reputation is initialized as an empty object if null/undefined
+         json.gameState.world.reputation = {};
        }
     }
   }
@@ -299,6 +324,8 @@ export const initGame = async (
     Starting HP (Level 1): ${characterData.hp} / ${characterData.maxHp} (Already rolled by user)
     Skill Ranks (Level 1): ${skillsStr}
     Feats (Level 1): [] (Will be selected via UI shortly if applicable, assume none for narrative start)
+    HP Die Rolls (Level 1): [${characterData.hpDieRolls?.[0] || characterData.hp}] (The raw die roll that contributed to HP at level 1)
+    Previous Max HP: ${characterData.maxHp} (Initial Max HP at level 1)
 
     Please generate the initial game state, starting location, and an introductory narrative hook.
     Ensure 'gameState.character.inventory' matches the provided Starting Equipment list EXACTLY.

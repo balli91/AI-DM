@@ -4,7 +4,7 @@ import {
   Shield, Zap, Heart, Brain, Sparkles, User, Sword, Activity, 
   AlertTriangle, Skull, Wind, Eye, ArrowUpDown, ChevronDown, ChevronUp, Info, Star
 } from 'lucide-react';
-import { SKILL_ABILITY_MAP, SKILL_DESCRIPTIONS, FEATS_DB } from '../constants';
+import { SKILL_ABILITY_MAP, SKILL_DESCRIPTIONS, FEATS_DB, CLASS_HIT_DICE } from '../constants';
 import { parseInventory, calculateACBreakdown, getAbilityMod, calculateEncumbrance, calculateSaveBreakdown, calculateBAB, getIterativeAttacks, calculateInitiative, hasFeat } from '../utils/rules';
 
 interface CharacterSheetProps {
@@ -46,7 +46,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
   const chaMod = getAbilityMod(character.stats.charisma);
 
   // Skills Sorting & Details State
-  const [skillSort, setSkillSort] = useState<'name' | 'bonus'>('name');
+  const [skillSort, setSkillSort] = useState<'name' | 'bonus'>('name'); // Default to 'name'
   const [expandedSkill, setExpandedSkill] = useState<string | null>(null);
 
   const sortedSkills = useMemo(() => {
@@ -78,6 +78,34 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
     });
   }, [skillSort, character.skills, character.feats, strMod, dexMod, conMod, intMod, wisMod, chaMod]);
 
+  // HP Breakdown Calculation
+  const hpBreakdown = useMemo(() => {
+    const hpDieRolls = character.hpDieRolls || [];
+    const conModTotal = conMod * character.level;
+    let featBonus = 0;
+    if (hasFeat(character, "Toughness")) {
+      featBonus += 3; // Toughness grants +3 HP, usually at level 1
+    }
+    
+    // For now, assume Toughness is only gained once and applied retroactively or at acquisition.
+    // If Toughness is gained at a later level, it grants +3 HP permanently. This simple model applies it if present.
+
+    const baseHp = hpDieRolls.reduce((sum, roll) => sum + roll, 0);
+    const finalTotalHp = baseHp + conModTotal + featBonus;
+
+    const breakdownLines = [
+      `Hit Dice Rolls: [${hpDieRolls.join(', ')}] = ${baseHp}`,
+      `CON Modifier Total (${conMod} x ${character.level}): +${conModTotal}`,
+    ];
+    if (featBonus > 0) {
+      breakdownLines.push(`Feat Bonuses (Toughness): +${featBonus}`);
+    }
+    breakdownLines.push(`FINAL TOTAL HP: ${finalTotalHp}`);
+
+    return breakdownLines;
+  }, [character.hpDieRolls, character.level, character.stats.constitution, character.feats]);
+
+
   return (
     <div className="h-full overflow-y-auto p-4 md:p-8 bg-rpg-950 custom-scrollbar animate-in fade-in duration-300">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -99,7 +127,7 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
           </div>
 
           <div className="flex items-center space-x-6 w-full md:w-auto justify-around md:justify-end">
-             <div className="text-center">
+             <div className="text-center group relative cursor-help">
                 <div className="text-xs text-rpg-muted uppercase font-bold">Hit Points</div>
                 <div className="flex items-end justify-center space-x-1">
                    <span className="text-2xl font-bold text-rpg-danger">{character.hp}</span>
@@ -108,6 +136,11 @@ export const CharacterSheet: React.FC<CharacterSheetProps> = ({ gameState }) => 
                 {/* HP Bar */}
                 <div className="w-24 h-1.5 bg-rpg-800 rounded-full mt-1 overflow-hidden">
                     <div className="h-full bg-rpg-danger transition-all duration-500" style={{ width: `${Math.min(100, (character.hp/character.maxHp)*100)}%` }} />
+                </div>
+                {/* HP Breakdown Tooltip */}
+                <div className="absolute top-full right-0 mt-2 w-48 bg-rpg-800 border border-rpg-700 p-2 rounded shadow-xl hidden group-hover:block z-50 text-xs text-left">
+                    <div className="font-bold mb-1 text-rpg-text">HP Breakdown:</div>
+                    {hpBreakdown.map((line, i) => <div key={i} className="text-rpg-muted">{line}</div>)}
                 </div>
              </div>
 
